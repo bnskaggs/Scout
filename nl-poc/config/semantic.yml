@@ -1,0 +1,16 @@
+defaults:
+  table: la_crime_raw
+  date_grain: month
+
+dimensions:
+  month:        { column: "DATE OCC", type: date_month }
+  area:         { column: "AREA NAME" }
+  crime_type:   { column: "Crm Cd Desc" }
+  premise:      { column: "Premis Desc" }
+  weapon:       { column: "Weapon Desc" }
+  vict_age:     { column: "Vict Age", bucket: "int" }
+
+metrics:
+  incidents:
+    agg: count
+    grain: [month, area, crime_type, premise, weapon, vict_age]
