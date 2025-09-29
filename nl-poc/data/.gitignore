@@ -1,0 +1,2 @@
+# Place source CSV files here (ignored by git)
+*.csv

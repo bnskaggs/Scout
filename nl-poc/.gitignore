@@ -1,0 +1,4 @@
+# Ignore generated databases and cache files
+data/*.duckdb
+data/*.duckdb.wal
+__pycache__/

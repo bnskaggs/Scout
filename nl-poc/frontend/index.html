@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scout NL Analytics POC</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background: #f6f6f6;
+      }
+      header {
+        background: #1f2933;
+        color: #fff;
+        padding: 1rem 2rem;
+      }
+      main {
+        padding: 2rem;
+      }
+      .input-row {
+        display: flex;
+        gap: 0.5rem;
+      }
+      input[type="text"] {
+        flex: 1;
+        padding: 0.75rem;
+        font-size: 1rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      button {
+        background: #2563eb;
+        color: #fff;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1rem;
+      }
+      button:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+      }
+      .card {
+        background: #fff;
+        padding: 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        margin-top: 1.5rem;
+      }
+      pre {
+        background: #111827;
+        color: #f3f4f6;
+        padding: 1rem;
+        border-radius: 4px;
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+      }
+      th, td {
+        border: 1px solid #e5e7eb;
+        padding: 0.5rem;
+        text-align: left;
+      }
+      .collapsible {
+        margin-top: 1rem;
+      }
+      canvas {
+        width: 100%;
+        max-width: 600px;
+        height: 320px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Scout NL Analytics</h1>
+    </header>
+    <main>
+      <div class="card">
+        <div class="input-row">
+          <input id="question" type="text" placeholder="Ask about crime incidents..." />
+          <button id="ask-btn">Ask</button>
+        </div>
+        <p id="status"></p>
+      </div>
+      <div class="card" id="result-card" style="display: none;">
+        <h2 id="answer"></h2>
+        <canvas id="chart"></canvas>
+        <div id="table-container"></div>
+        <details class="collapsible">
+          <summary>How I computed this</summary>
+          <h3>SQL</h3>
+          <pre id="sql"></pre>
+          <h3>Plan</h3>
+          <pre id="plan"></pre>
+          <h3>Lineage</h3>
+          <pre id="lineage"></pre>
+        </details>
+      </div>
+    </main>
+    <script>
+      const askBtn = document.getElementById('ask-btn');
+      const questionInput = document.getElementById('question');
+      const statusEl = document.getElementById('status');
+      const answerEl = document.getElementById('answer');
+      const resultCard = document.getElementById('result-card');
+      const sqlEl = document.getElementById('sql');
+      const planEl = document.getElementById('plan');
+      const lineageEl = document.getElementById('lineage');
+      const tableContainer = document.getElementById('table-container');
+      const chartCanvas = document.getElementById('chart');
+      let chartContext = chartCanvas.getContext('2d');
+      const apiBase = window.location.port === '3000' ? 'http://127.0.0.1:8000' : window.location.origin;
+
+      askBtn.addEventListener('click', async () => {
+        const question = questionInput.value.trim();
+        if (!question) {
+          statusEl.textContent = 'Please enter a question.';
+          return;
+        }
+        askBtn.disabled = true;
+        statusEl.textContent = 'Thinking...';
+        try {
+          const response = await fetch(`${apiBase}/ask`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question })
+          });
+          if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail?.message || error.detail || 'Request failed');
+          }
+          const data = await response.json();
+          renderResult(data);
+          statusEl.textContent = '';
+        } catch (err) {
+          statusEl.textContent = err.message;
+        } finally {
+          askBtn.disabled = false;
+        }
+      });
+
+      function renderResult(data) {
+        resultCard.style.display = 'block';
+        answerEl.textContent = data.answer;
+        sqlEl.textContent = data.sql;
+        planEl.textContent = JSON.stringify(data.plan, null, 2);
+        lineageEl.textContent = JSON.stringify(data.lineage, null, 2);
+        renderTable(data.table);
+        renderChart(data.chart);
+      }
+
+      function renderTable(rows) {
+        if (!rows || !rows.length) {
+          tableContainer.innerHTML = '<p>No rows returned.</p>';
+          return;
+        }
+        const headers = Object.keys(rows[0]);
+        const headerHtml = headers.map(h => `<th>${h}</th>`).join('');
+        const bodyHtml = rows.map(row => {
+          const cells = headers.map(h => `<td>${row[h] ?? ''}</td>`).join('');
+          return `<tr>${cells}</tr>`;
+        }).join('');
+        tableContainer.innerHTML = `<table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>`;
+      }
+
+      function renderChart(chart) {
+        if (!chart || !chart.data || !chart.data.length) {
+          chartContext.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+          return;
+        }
+        const width = chartCanvas.width;
+        const height = chartCanvas.height;
+        chartContext.clearRect(0, 0, width, height);
+        if (chart.type === 'line') {
+          drawLineChart(chart);
+        } else {
+          drawBarChart(chart);
+        }
+      }
+
+      function drawBarChart(chart) {
+        const padding = 40;
+        const availableWidth = chartCanvas.width - padding * 2;
+        const maxVal = Math.max(...chart.data.map(d => Number(d[chart.y] || 0)));
+        const barWidth = availableWidth / chart.data.length;
+        chart.data.forEach((row, index) => {
+          const value = Number(row[chart.y] || 0);
+          const barHeight = maxVal ? (value / maxVal) * (chartCanvas.height - padding * 2) : 0;
+          const x = padding + index * barWidth;
+          const y = chartCanvas.height - padding - barHeight;
+          chartContext.fillStyle = '#2563eb';
+          chartContext.fillRect(x, y, barWidth * 0.6, barHeight);
+          chartContext.fillStyle = '#111827';
+          chartContext.font = '12px sans-serif';
+          chartContext.fillText(String(row[chart.x]), x, chartCanvas.height - padding + 14);
+        });
+      }
+
+      function drawLineChart(chart) {
+        const padding = 40;
+        const values = chart.data.map(d => Number(d[chart.y] || 0));
+        const maxVal = Math.max(...values);
+        const minVal = Math.min(...values);
+        const range = maxVal - minVal || 1;
+        chartContext.beginPath();
+        chart.data.forEach((row, idx) => {
+          const x = padding + (idx / (chart.data.length - 1)) * (chartCanvas.width - padding * 2);
+          const value = Number(row[chart.y] || 0);
+          const y = chartCanvas.height - padding - ((value - minVal) / range) * (chartCanvas.height - padding * 2);
+          if (idx === 0) {
+            chartContext.moveTo(x, y);
+          } else {
+            chartContext.lineTo(x, y);
+          }
+        });
+        chartContext.strokeStyle = '#ef4444';
+        chartContext.lineWidth = 2;
+        chartContext.stroke();
+      }
+    </script>
+  </body>
+</html>
