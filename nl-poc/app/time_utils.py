@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from zoneinfo import ZoneInfo
+
 
 @dataclass
 class TimeRange:
@@ -35,6 +37,12 @@ _QUARTER_PATTERN = re.compile(
 )
 _MONTH_PATTERN = re.compile(r"(20\d{2})[-/](0[1-9]|1[0-2])")
 _YEAR_PATTERN = re.compile(r"\b(20\d{2})\b")
+_RELATIVE_MONTHS_PATTERN = re.compile(
+    r"\b(?P<keyword>past|last)\s+(?P<count>\d{1,2})\s+months?\b",
+    re.IGNORECASE,
+)
+
+_CHICAGO_TZ = ZoneInfo("America/Chicago")
 
 
 def _start_of_month(year: int, month: int) -> date:
@@ -53,7 +61,7 @@ def _next_month(dt: date) -> date:
 
 
 def current_date() -> date:
-    return date.today()
+    return datetime.now(_CHICAGO_TZ).date()
 
 
 def current_month_start(today: Optional[date] = None) -> date:
@@ -118,6 +126,22 @@ def parse_relative_range(text: str, today: Optional[date] = None) -> Optional[Ti
         start = date(year, start_month, 1)
         end = date(year, start_month + 2, calendar.monthrange(year, start_month + 2)[1])
         return TimeRange(start=start, end=_next_month(end.replace(day=1)), label=f"Q{quarter} {year}")
+    match = _RELATIVE_MONTHS_PATTERN.search(text_l)
+    if match:
+        count = int(match.group("count"))
+        if count <= 0:
+            return None
+        keyword = match.group("keyword").lower()
+        anchor = current_month_start(today)
+        if keyword == "last":
+            end = current_month_start(today)
+            start = _shift_month(previous_month_start(today), -(count - 1))
+            label = f"Last {count} months"
+        else:
+            start = _shift_month(anchor, -(count - 1))
+            end = _next_month(anchor)
+            label = f"Past {count} months"
+        return TimeRange(start=start, end=end, label=label)
     return None
 
 
@@ -161,11 +185,16 @@ def parse_year(text: str) -> Optional[TimeRange]:
 
 def extract_time_range(text: str, today: Optional[date] = None) -> Optional[TimeRange]:
     today = today or current_date()
-    for parser in (parse_month, parse_quarter, parse_relative_range, parse_year):
-        result = parser(text)
-        if result:
-            return result
-    return None
+    month_range = parse_month(text)
+    if month_range:
+        return month_range
+    quarter_range = parse_quarter(text)
+    if quarter_range:
+        return quarter_range
+    relative_range = parse_relative_range(text, today=today)
+    if relative_range:
+        return relative_range
+    return parse_year(text)
 
 
 def describe_time_range(time_range: Optional[TimeRange]) -> str:
