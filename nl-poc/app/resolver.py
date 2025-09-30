@@ -121,6 +121,13 @@ class PlanResolver:
             field = filter_["field"]
             if field == "month":
                 value = filter_.get("value")
+                op = filter_.get("op", "between")
+                if op == "between" and isinstance(value, list):
+                    start = value[0] if value else None
+                    end = value[1] if len(value) > 1 else None
+                    if start and (end is None or end == start):
+                        filter_ = {"field": field, "op": "=", "value": start}
+                        value = start
                 if isinstance(value, (list, tuple)):
                     start = value[0]
                     end = value[1] if len(value) > 1 else None
@@ -132,12 +139,22 @@ class PlanResolver:
                 if start:
                     start_date = start
                     end_date = end or start
-                    time_range = TimeRange(start=self.executor.parse_date(start_date), end=self.executor.parse_date(end_date), label="")
+                    time_range = TimeRange(
+                        start=self.executor.parse_date(start_date),
+                        end=self.executor.parse_date(end_date),
+                        label="",
+                    )
             else:
                 resolved_value = self._resolve_filter_values(field, filter_["op"], filter_["value"])
                 filters.append({"field": field, "op": filter_["op"], "value": resolved_value})
-        order_by = plan.get("order_by") or [{"field": "incidents", "dir": "desc"}]
-        limit = min(int(plan.get("limit", 50)), 2000)
+        order_by = plan.get("order_by")
+        if order_by is None:
+            order_by = [{"field": "incidents", "dir": "desc"}]
+        limit_value = plan.get("limit")
+        if limit_value in (None, "", 0, "0"):
+            limit = 0
+        else:
+            limit = min(int(limit_value), 2000)
         compare = plan.get("compare")
         resolved_plan = {
             "metrics": plan.get("metrics", []),

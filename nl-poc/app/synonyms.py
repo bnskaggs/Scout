@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,29 @@ def load_synonyms() -> SynonymBundle:
 SHARE_TOKENS = {"share", "percentage", "% of", "percent of"}
 
 
+WEAPON_SYNONYM_TOKENS = {
+    "firearm",
+    "firearms",
+    "gun",
+    "guns",
+    "handgun",
+    "handguns",
+    "hand gun",
+    "rifle",
+    "rifles",
+    "shotgun",
+    "shotguns",
+}
+
+WEAPON_LIKE_PATTERNS = [
+    "%firearm%",
+    "%gun%",
+    "%hand gun%",
+    "%rifle%",
+    "%shotgun%",
+]
+
+
 def find_dimension(keyword: str, bundle: SynonymBundle) -> str | None:
     keyword_l = keyword.lower().strip()
     if keyword_l in bundle.dimension_aliases:
@@ -97,4 +120,20 @@ def detect_compare(text: str, bundle: SynonymBundle) -> str | None:
     for key, value in bundle.compare_keywords.items():
         if key in text_lower:
             return value
+    return None
+
+
+def detect_weapon_patterns(text: str) -> Optional[List[str]]:
+    text_lower = text.lower()
+    for token in WEAPON_SYNONYM_TOKENS:
+        if token in text_lower:
+            return list(WEAPON_LIKE_PATTERNS)
+    return None
+
+
+def weapon_patterns_from_value(value: str) -> Optional[List[str]]:
+    value_lower = value.lower()
+    for token in WEAPON_SYNONYM_TOKENS:
+        if token in value_lower:
+            return list(WEAPON_LIKE_PATTERNS)
     return None

@@ -12,8 +12,10 @@ from .synonyms import (
     SHARE_TOKENS,
     SynonymBundle,
     detect_compare,
+    detect_weapon_patterns,
     find_dimension,
     load_synonyms,
+    weapon_patterns_from_value,
 )
 from .time_utils import TimeRange, extract_time_range
 
@@ -142,6 +144,9 @@ def _detect_filters(text: str, bundle: SynonymBundle, time_range: Optional[TimeR
     if match:
         candidates = [match.group(1).strip(), match.group(2).strip()]
         filters.append({"field": "area", "op": "in", "value": [c.title() for c in candidates]})
+    weapon_patterns = detect_weapon_patterns(text)
+    if weapon_patterns and not any(f.get("field") == "weapon" for f in filters):
+        filters.append({"field": "weapon", "op": "like_any", "value": weapon_patterns})
     return filters
 
 
@@ -163,7 +168,123 @@ def _detect_limit(text: str) -> int:
             return min(2000, max(1, int(match.group(1))))
     if "top" in text.lower():
         return 10
-    return 50
+    return 0
+
+
+def _has_rank_intent(text: str) -> bool:
+    text_lower = text.lower()
+    return bool(
+        _TOP_N_PATTERN.search(text)
+        or _BOT_N_PATTERN.search(text)
+        or "top" in text_lower
+        or "highest" in text_lower
+        or "lowest" in text_lower
+        or "rank" in text_lower
+    )
+
+
+def _question_specifies_grouping(
+    question: str, bundle: SynonymBundle, group_by: List[str]
+) -> bool:
+    text_lower = question.lower()
+    for phrase in bundle.dimension_aliases:
+        if phrase == "month":
+            continue
+        normalized = phrase.lower()
+        if f"by {normalized}" in text_lower:
+            return True
+    for dimension in group_by:
+        if dimension == "month":
+            continue
+        canonical = dimension.replace("_", " ")
+        if canonical and canonical in text_lower:
+            return True
+        if canonical and f"{canonical}s" in text_lower:
+            return True
+        for phrase, mapped in bundle.dimension_aliases.items():
+            if mapped != dimension:
+                continue
+            normalized = phrase.lower()
+            if normalized in text_lower or f"{normalized}s" in text_lower:
+                return True
+    return False
+
+
+def _normalize_filters(
+    question: str, filters: List[Dict[str, object]]
+) -> List[Dict[str, object]]:
+    normalized: List[Dict[str, object]] = []
+    weapon_patterns = detect_weapon_patterns(question)
+    for filt in filters or []:
+        if not isinstance(filt, dict):
+            continue
+        current = dict(filt)
+        field = current.get("field")
+        if field == "month":
+            op = current.get("op", "between")
+            value = current.get("value")
+            if isinstance(value, list):
+                start = value[0] if value else None
+                end = value[1] if len(value) > 1 else None
+                if op == "between" and start and (not end or end == start):
+                    current["op"] = "="
+                    current["value"] = start
+                elif op != "=" and len(value) == 1 and start:
+                    current["op"] = "="
+                    current["value"] = start
+            elif op == "between" and isinstance(value, str):
+                current["op"] = "="
+        elif field == "weapon":
+            value = current.get("value")
+            collected: List[str] = []
+            if isinstance(value, str):
+                patterns = weapon_patterns_from_value(value)
+                if patterns:
+                    collected.extend(patterns)
+            elif isinstance(value, list):
+                for entry in value:
+                    if isinstance(entry, str):
+                        patterns = weapon_patterns_from_value(entry)
+                        if patterns:
+                            collected.extend(patterns)
+            if collected:
+                deduped = sorted(set(pattern.lower() for pattern in collected))
+                current["op"] = "like_any"
+                current["value"] = deduped
+            elif current.get("op") == "like_any" and isinstance(value, list):
+                current["value"] = [str(v).lower() for v in value]
+        normalized.append(current)
+    if weapon_patterns and not any(f.get("field") == "weapon" for f in normalized):
+        normalized.append({"field": "weapon", "op": "like_any", "value": weapon_patterns})
+    return normalized
+
+
+def _post_process_plan(
+    question: str, plan: Dict[str, object], bundle: SynonymBundle
+) -> Dict[str, object]:
+    text_lower = question.lower()
+    group_by = plan.get("group_by") or []
+    if not isinstance(group_by, list):
+        group_by = [group_by]
+    top_intent = _has_rank_intent(question)
+    trend_tokens = ("trend" in text_lower) or ("by month" in text_lower) or ("monthly" in text_lower)
+    if trend_tokens:
+        group_by = ["month"]
+    compare = plan.get("compare")
+    if compare and not _question_specifies_grouping(question, bundle, group_by):
+        group_by = []
+    plan["group_by"] = group_by
+    filters = plan.get("filters") or []
+    plan["filters"] = _normalize_filters(question, filters)
+    limit_value = plan.get("limit")
+    if not top_intent:
+        plan["limit"] = 0
+    elif limit_value is None:
+        plan["limit"] = 10
+    order_by = plan.get("order_by")
+    if order_by is None:
+        plan["order_by"] = []
+    return plan
 
 
 def build_plan_rule_based(question: str) -> Dict[str, object]:
@@ -199,7 +320,7 @@ def build_plan_rule_based(question: str) -> Dict[str, object]:
     )
     global _LAST_ENGINE
     _LAST_ENGINE = "rule_based"
-    return plan.to_dict()
+    return _post_process_plan(question, plan.to_dict(), bundle)
 
 
 def build_plan_llm(question: str) -> Dict[str, object]:
@@ -223,7 +344,8 @@ def build_plan_llm(question: str) -> Dict[str, object]:
         raise RuntimeError(f"LLM returned non-JSON or invalid plan: {raw[:200]}...") from exc
 
     _LAST_ENGINE = "llm"
-    return plan
+    bundle = load_synonyms()
+    return _post_process_plan(question, plan, bundle)
 
 
 def build_plan(question: str, prefer_llm: bool = True) -> Dict[str, object]:
