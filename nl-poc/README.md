@@ -57,6 +57,8 @@ By default the service uses the heuristic planner. To enable the LLM-powered int
 2. Set `INTENT_USE_LLM=true` and provide `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` values for your provider. When using the
    bundled OpenAI integration, `LLM_PROVIDER` must be `openai` and `pip install openai` is required in the runtime environment.
 3. Restart the API so the new environment variables take effect.
+4. When debugging intent calls, configure Python logging to enable `DEBUG` level for `app.llm_client` so the additional request
+   lifecycle information is emitted.
 
 When the LLM settings are omitted or the call fails, the service automatically falls back to the rule-based planner.
 
