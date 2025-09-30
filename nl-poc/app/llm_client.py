@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLMNotConfigured(Exception):
+    logger.debug(Exception)
     pass
 
 
@@ -69,6 +70,7 @@ def call_intent_llm(prompt_text: str, semantic_yaml: str, column_catalog: list, 
     """
     Returns raw JSON string from the LLM. Raises LLMNotConfigured if env is missing.
     """
+    logger.debug("call_intent_llm entered")
     provider = os.getenv("LLM_PROVIDER", "").lower()
     model = os.getenv("LLM_MODEL", "")
     api_key = os.getenv("LLM_API_KEY", "")

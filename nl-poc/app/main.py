@@ -28,6 +28,19 @@ class AskRequest(BaseModel):
     use_llm: Optional[bool] = None
 
 
+import logging, sys
+
+llm_logger = logging.getLogger("app.llm_client")
+llm_logger.setLevel(logging.DEBUG)
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.DEBUG)
+handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+
+llm_logger.handlers.clear()        # avoid duplicate logs if reloading
+llm_logger.addHandler(handler)
+llm_logger.propagate = False       # don't let Uvicorn re-handle it
+
 app = FastAPI(title="Scout NL Analytics POC")
 app.add_middleware(
     CORSMiddleware,
