@@ -50,6 +50,31 @@
         box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
         margin-top: 1.5rem;
       }
+
+      .result-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      .result-meta {
+        display: none;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .result-meta span {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        background: #e0e7ff;
+        color: #1f2933;
+        border-radius: 999px;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.85rem;
+        font-weight: 600;
+
       .error-panel {
         display: none;
         margin-top: 1rem;
@@ -85,6 +110,7 @@
       .suggestion-pill:hover {
         background: #fca5a5;
         color: #fff;
+
       }
       pre {
         background: #111827;
@@ -130,7 +156,10 @@
         </div>
       </div>
       <div class="card" id="result-card" style="display: none;">
-        <h2 id="answer"></h2>
+        <div class="result-header">
+          <h2 id="answer"></h2>
+          <div class="result-meta" id="result-meta" aria-live="polite"></div>
+        </div>
         <canvas id="chart"></canvas>
         <div id="table-container"></div>
         <details class="collapsible">
@@ -158,7 +187,12 @@
       const lineageEl = document.getElementById('lineage');
       const tableContainer = document.getElementById('table-container');
       const chartCanvas = document.getElementById('chart');
+
+      const resultMeta = document.getElementById('result-meta');
+      let chartContext = chartCanvas.getContext('2d');
+
       let chartInstance;
+
       const apiBase = window.location.port === '3000' ? 'http://127.0.0.1:8000' : window.location.origin;
 
       askBtn.addEventListener('click', () => submitQuestion(questionInput.value));
@@ -245,11 +279,51 @@
       function renderResult(data) {
         resultCard.style.display = 'block';
         answerEl.textContent = data.answer;
+        renderMetadata(data);
         sqlEl.textContent = data.sql;
         planEl.textContent = JSON.stringify(data.plan, null, 2);
         lineageEl.textContent = JSON.stringify(data.lineage, null, 2);
         renderTable(data.table);
         renderChart(data.chart);
+      }
+
+      function renderMetadata(data) {
+        const badges = [];
+        if (data.engine) {
+          badges.push(`<span><strong>Engine:</strong> ${data.engine}</span>`);
+        }
+        const runtime = formatRuntime(data.runtime_ms);
+        if (runtime) {
+          badges.push(`<span><strong>Runtime:</strong> ${runtime}</span>`);
+        }
+        const rowcount = formatCount(data.rowcount);
+        if (rowcount) {
+          badges.push(`<span><strong>Rows:</strong> ${rowcount}</span>`);
+        }
+        resultMeta.innerHTML = badges.join('');
+        resultMeta.style.display = badges.length ? 'flex' : 'none';
+      }
+
+      function formatRuntime(value) {
+        const runtime = Number(value);
+        if (!Number.isFinite(runtime)) {
+          return null;
+        }
+        if (runtime >= 1000) {
+          const seconds = runtime / 1000;
+          const precision = seconds >= 10 ? 1 : 2;
+          return `${seconds.toFixed(precision)} s`;
+        }
+        const precision = runtime >= 100 ? 0 : runtime >= 10 ? 1 : 2;
+        return `${runtime.toFixed(precision)} ms`;
+      }
+
+      function formatCount(value) {
+        const count = Number(value);
+        if (!Number.isFinite(count)) {
+          return value ? String(value) : null;
+        }
+        return new Intl.NumberFormat('en-US').format(count);
       }
 
       function renderTable(rows) {
