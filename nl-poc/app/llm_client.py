@@ -140,26 +140,22 @@ def call_intent_llm(prompt_text: str, semantic_yaml: str, column_catalog: list, 
         logger.debug("Initializing OpenAI client for provider '%s' with model '%s'", provider, model)
         client = OpenAI(api_key=api_key)
         logger.debug(
-            "Sending OpenAI responses request", extra={"model": model, "column_count": len(column_catalog)}
+            "Sending OpenAI chat completion request", extra={"model": model, "column_count": len(column_catalog)}
         )
-        resp = client.responses.create(
+        resp = client.chat.completions.create(
             model=model,
             temperature=0,
-            input=[
-                {"role": "system", "content": [{"type": "text", "text": sys_prompt}]},
-                {"role": "user", "content": [{"type": "text", "text": user_payload}]},
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_payload},
             ],
         )
-        logger.info("OpenAI responses request succeeded", extra={"response_id": getattr(resp, "id", None)})
+        logger.info("OpenAI chat completion succeeded", extra={"response_id": getattr(resp, "id", None)})
     except OpenAIError as exc:  # pragma: no cover - networked call
-        logger.exception("OpenAI responses request raised OpenAIError")
-        raise RuntimeError("OpenAI request failed") from exc
+        logger.exception("OpenAI chat completion raised OpenAIError")
+        raise RuntimeError("OpenAI chat completion failed") from exc
     except Exception as exc:  # pragma: no cover - defensive fallback
-        logger.exception("OpenAI responses request raised unexpected exception")
-        raise RuntimeError("OpenAI request failed") from exc
+        logger.exception("OpenAI chat completion raised unexpected exception")
+        raise RuntimeError("OpenAI chat completion failed") from exc
 
-    try:
-        return resp.output_text.strip()
-    except AttributeError:
-        # Fall back to Chat Completions-style payloads for backward compatibility.
-        return resp.choices[0].message.content.strip()
+    return resp.choices[0].message.content.strip()
