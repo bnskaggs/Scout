@@ -42,6 +42,8 @@ def _build_dimension_aliases() -> Dict[str, str]:
         "location": "premise",
         "place": "premise",
         "weapon": "weapon",
+        "weapon category": "weapon",
+        "weapon categories": "weapon",
         "victim age": "vict_age",
         "age": "vict_age",
         "month": "month",
@@ -58,7 +60,6 @@ def _build_compare_keywords() -> Dict[str, str]:
         "mom%": "mom",
         "qoq": "mom",
         "compare to last month": "mom",
-        "last month": "mom",
         "yoy": "yoy",
         "year over year": "yoy",
         "year-over-year": "yoy",
@@ -72,6 +73,9 @@ def load_synonyms() -> SynonymBundle:
         dimension_aliases=_build_dimension_aliases(),
         compare_keywords=_build_compare_keywords(),
     )
+
+
+SHARE_TOKENS = {"share", "percentage", "% of", "percent of"}
 
 
 def find_dimension(keyword: str, bundle: SynonymBundle) -> str | None:

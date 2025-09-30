@@ -5,7 +5,13 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from .synonyms import SynonymBundle, canonical_metric, detect_compare, find_dimension, load_synonyms
+from .synonyms import (
+    SHARE_TOKENS,
+    SynonymBundle,
+    detect_compare,
+    find_dimension,
+    load_synonyms,
+)
 from .time_utils import TimeRange, extract_time_range
 
 
@@ -17,6 +23,7 @@ class Plan:
     order_by: List[Dict[str, str]]
     limit: int
     compare: Optional[Dict[str, object]] = None
+    extras: Optional[Dict[str, object]] = None
 
     def to_dict(self) -> Dict[str, object]:
         data: Dict[str, object] = {
@@ -28,6 +35,8 @@ class Plan:
         }
         if self.compare:
             data["compare"] = self.compare
+        if self.extras:
+            data["extras"] = self.extras
         return data
 
 
@@ -35,7 +44,7 @@ _TOKEN_SPLIT = re.compile(r"[^A-Za-z0-9]+")
 _TOP_N_PATTERN = re.compile(r"top\s+(\d+)", re.IGNORECASE)
 _BOT_N_PATTERN = re.compile(r"bottom\s+(\d+)", re.IGNORECASE)
 _LIMIT_PATTERN = re.compile(r"limit\s+(\d+)", re.IGNORECASE)
-_IN_LIST_PATTERN = re.compile(r"([A-Za-z][A-Za-z\s]+?)\s+(?:vs\.?|versus)\s+([A-Za-z][A-Za-z\s]+)", re.IGNORECASE)
+_IN_LIST_PATTERN = re.compile(r"\b([\w .&/-]+)\s+vs\.?\s+([\w .&/-]+)\b", re.IGNORECASE)
 
 
 def _extract_tokens(text: str) -> List[str]:
@@ -59,6 +68,13 @@ def _detect_group_by(text: str, bundle: SynonymBundle) -> List[str]:
         candidate = find_dimension(keyword, bundle)
         if candidate and candidate not in group_by:
             group_by.append(candidate)
+    if _IN_LIST_PATTERN.search(text):
+        if "area" not in group_by:
+            group_by.append("area")
+    if ("weapon categories" in text_lower or "weapon category" in text_lower) and "weapon" not in group_by:
+        group_by.append("weapon")
+    if "area" in group_by and "across all areas" in text_lower:
+        group_by = [dim for dim in group_by if dim != "area"]
     return group_by
 
 
@@ -71,14 +87,14 @@ def _detect_filters(text: str, bundle: SynonymBundle, time_range: Optional[TimeR
     for dim_key, canonical in bundle.dimension_aliases.items():
         if canonical in ("month",):
             continue
-        pattern = re.compile(rf"(?:for|in|at|on)\s+({dim_key}[\w\s-]*)", re.IGNORECASE)
+        pattern = re.compile(rf"\b(?:for|in|at|on)\s+({dim_key}[\w\s-]*)", re.IGNORECASE)
         for match in pattern.finditer(text):
             value = match.group(1)
             value = value.replace(dim_key, "", 1).strip().strip(",")
             if value:
                 filters.append({"field": canonical, "op": "=", "value": value.title()})
     # fallback: capture "in Hollywood"-style fragments as area filters
-    for match in re.finditer(r"(?:in|for|at)\s+([A-Za-z][A-Za-z\s]+)", text):
+    for match in re.finditer(r"\b(?:in|for|at)\s+([A-Za-z][A-Za-z\s]+)", text):
         candidate = match.group(1).strip().strip(",")
         if not candidate:
             continue
@@ -131,6 +147,13 @@ def generate_plan(question: str) -> Dict[str, object]:
     filters = _detect_filters(question, bundle, time_range)
     order_by = _detect_order(question)
     limit = _detect_limit(question)
+    extras: Dict[str, object] = {}
+
+    text_lower = question.lower()
+    if any(token in text_lower for token in SHARE_TOKENS):
+        extras["share_city"] = True
+        if not order_by:
+            order_by = [{"field": "incidents", "dir": "desc"}]
 
     compare_keyword = detect_compare(question, bundle)
     compare = None
@@ -144,5 +167,6 @@ def generate_plan(question: str) -> Dict[str, object]:
         order_by=order_by,
         limit=limit,
         compare=compare,
+        extras=extras or None,
     )
     return plan.to_dict()

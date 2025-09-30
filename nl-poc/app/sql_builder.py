@@ -1,6 +1,7 @@
 """SQL builder for the NL analytics prototype."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Dict, List
 
 from .resolver import SemanticModel
@@ -69,6 +70,7 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
     order_by = plan.get("order_by", [])
     limit = plan.get("limit", 50)
     compare = plan.get("compare")
+    extras = plan.get("extras") or {}
 
     base_cte = "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw)"
 
@@ -126,11 +128,30 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
             final_sql += f" LIMIT {limit}"
         return final_sql
 
-    sql = f"{base_cte} SELECT {select_clause} FROM base"
+    agg_query = f"SELECT {select_clause} FROM base"
     if where_clause:
-        sql += f" {where_clause}"
+        agg_query += f" {where_clause}"
     if group_clause:
-        sql += f" {group_clause}"
+        agg_query += f" {group_clause}"
+
+    share_requested = bool(extras.get("share_city")) and _is_single_month_equality(filters)
+    if compare:
+        share_requested = False
+
+    if share_requested:
+        cte_sql = f"{base_cte}, aggregated AS ({agg_query})"
+        final_select_parts = []
+        for dim in group_by:
+            final_select_parts.append(dim)
+        for metric in metrics:
+            final_select_parts.append(metric)
+        final_select_parts.append(
+            "incidents * 1.0 / NULLIF(SUM(incidents) OVER (), 0) AS share_city"
+        )
+        sql = f"{cte_sql} SELECT {', '.join(final_select_parts)} FROM aggregated"
+    else:
+        sql = f"{base_cte} {agg_query}"
+
     if order_by:
         sql += f" {_build_order_clause(order_by)}"
     if limit:
@@ -152,3 +173,26 @@ def _build_order_clause(order_by: List[Dict[str, str]]) -> str:
     field = order.get("field")
     direction = order.get("dir", "desc").upper()
     return f"ORDER BY {field} {direction}"
+
+
+def _is_single_month_equality(filters: List[Dict[str, object]]) -> bool:
+    for filt in filters:
+        if filt.get("field") != "month":
+            continue
+        op = filt.get("op")
+        value = filt.get("value")
+        if op == "=" and value:
+            return True
+        if isinstance(value, list) and len(value) == 1:
+            return True
+        if isinstance(value, list) and len(value) >= 2 and value[0] and value[1]:
+            try:
+                start = datetime.strptime(value[0], "%Y-%m-%d")
+                end = datetime.strptime(value[1], "%Y-%m-%d")
+            except (TypeError, ValueError):
+                continue
+            if (end.year == start.year and end.month == start.month + 1) or (
+                start.month == 12 and end.year == start.year + 1 and end.month == 1
+            ):
+                return True
+    return False
