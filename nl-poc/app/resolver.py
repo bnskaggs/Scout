@@ -77,9 +77,16 @@ class PlanResolutionError(Exception):
 
 
 class PlanResolver:
+    _PATTERN_OPERATORS = {"like", "not like", "like_any", "contains"}
+
     def __init__(self, semantic: SemanticModel, executor: DuckDBExecutor):
         self.semantic = semantic
         self.executor = executor
+
+    def _should_bypass_value_resolution(self, op: Optional[str]) -> bool:
+        if not op:
+            return False
+        return op.lower() in self._PATTERN_OPERATORS
 
     def _validate_metric(self, metric: str) -> None:
         if metric not in self.semantic.metrics:
@@ -145,7 +152,11 @@ class PlanResolver:
                         label="",
                     )
             else:
-                resolved_value = self._resolve_filter_values(field, filter_["op"], filter_["value"])
+                op = filter_.get("op")
+                if self._should_bypass_value_resolution(op):
+                    resolved_value = filter_.get("value")
+                else:
+                    resolved_value = self._resolve_filter_values(field, op, filter_["value"])
                 filters.append({"field": field, "op": filter_["op"], "value": resolved_value})
         order_by = plan.get("order_by")
         if order_by is None:
