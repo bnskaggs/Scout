@@ -3,6 +3,9 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+import os
+from importlib import reload
+
 from app.planner import build_plan
 
 
@@ -19,3 +22,22 @@ def test_plan_single_month():
     plan = build_plan(q, prefer_llm=False)
     months = [f for f in plan.get("filters", []) if f["field"] == "month"]
     assert months and months[0]["op"] in ("=", "between")
+
+
+def test_load_env_once(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_PROVIDER=openai\nLLM_MODEL=gpt-test\nLLM_API_KEY=abc123\n", encoding="utf-8")
+
+    # ensure the loader looks in our temp directory
+    monkeypatch.chdir(tmp_path)
+    for key in ("LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+
+    import app.llm_client as llm_client
+
+    reload(llm_client)
+    llm_client._load_env_once()
+
+    assert os.getenv("LLM_PROVIDER") == "openai"
+    assert os.getenv("LLM_MODEL") == "gpt-test"
+    assert os.getenv("LLM_API_KEY") == "abc123"
