@@ -40,9 +40,21 @@ def _build_filters(filters: List[Dict[str, object]], semantic: SemanticModel, al
         if field == "month":
             month_expr = dimension_expression("month", semantic, alias)
             if isinstance(value, (list, tuple)) and len(value) >= 2 and value[0] and value[1]:
-                clauses.append(
-                    f"{month_expr} >= DATE '{value[0]}' AND {month_expr} < DATE '{value[1]}'"
-                )
+                start, end = value[0], value[1]
+                if start == end:
+                    clauses.append(f"{month_expr} = DATE '{start}'")
+                else:
+                    try:
+                        start_dt = datetime.fromisoformat(str(start))
+                        end_dt = datetime.fromisoformat(str(end))
+                    except ValueError:
+                        start_dt = end_dt = None
+                    if start_dt and end_dt and start_dt == end_dt:
+                        clauses.append(f"{month_expr} = DATE '{start}'")
+                    else:
+                        clauses.append(
+                            f"{month_expr} >= DATE '{start}' AND {month_expr} < DATE '{end}'"
+                        )
             elif isinstance(value, (list, tuple)) and value:
                 clauses.append(f"{month_expr} = DATE '{value[0]}'")
             elif isinstance(value, str):
