@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from datetime import date
+from pathlib import Path
 
 try:  # pragma: no cover - optional dependency for runtime environments
     from dateutil.relativedelta import relativedelta
@@ -24,6 +25,44 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+
+
+_ENV_LOADED = False
+
+
+def _load_env_once() -> None:
+    """Populate os.environ from a local .env file if available."""
+
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+
+    base_dir = Path(__file__).resolve().parents[1]
+    env_paths = [base_dir / ".env"]
+
+    cwd_path = Path.cwd() / ".env"
+    if cwd_path not in env_paths:
+        env_paths.append(cwd_path)
+
+    for env_path in env_paths:
+        if not env_path.exists():
+            continue
+        try:
+            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+        except OSError:
+            logger.debug("Unable to read .env file at %s", env_path)
+
+    _ENV_LOADED = True
 
 
 
@@ -71,6 +110,8 @@ def call_intent_llm(prompt_text: str, semantic_yaml: str, column_catalog: list, 
     Returns raw JSON string from the LLM. Raises LLMNotConfigured if env is missing.
     """
     logger.debug("call_intent_llm entered")
+    _load_env_once()
+
     provider = os.getenv("LLM_PROVIDER", "").lower()
     model = os.getenv("LLM_MODEL", "")
     api_key = os.getenv("LLM_API_KEY", "")
