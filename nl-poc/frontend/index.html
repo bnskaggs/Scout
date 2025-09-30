@@ -144,6 +144,7 @@
         </details>
       </div>
     </main>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
       const askBtn = document.getElementById('ask-btn');
       const questionInput = document.getElementById('question');
@@ -157,7 +158,7 @@
       const lineageEl = document.getElementById('lineage');
       const tableContainer = document.getElementById('table-container');
       const chartCanvas = document.getElementById('chart');
-      let chartContext = chartCanvas.getContext('2d');
+      let chartInstance;
       const apiBase = window.location.port === '3000' ? 'http://127.0.0.1:8000' : window.location.origin;
 
       askBtn.addEventListener('click', () => submitQuestion(questionInput.value));
@@ -266,58 +267,76 @@
       }
 
       function renderChart(chart) {
+        if (chartInstance) {
+          chartInstance.destroy();
+          chartInstance = null;
+        }
+
         if (!chart || !chart.data || !chart.data.length) {
-          chartContext.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+          const context = chartCanvas.getContext('2d');
+          if (context) {
+            context.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+          }
           return;
         }
-        const width = chartCanvas.width;
-        const height = chartCanvas.height;
-        chartContext.clearRect(0, 0, width, height);
-        if (chart.type === 'line') {
-          drawLineChart(chart);
-        } else {
-          drawBarChart(chart);
-        }
-      }
 
-      function drawBarChart(chart) {
-        const padding = 40;
-        const availableWidth = chartCanvas.width - padding * 2;
-        const maxVal = Math.max(...chart.data.map(d => Number(d[chart.y] || 0)));
-        const barWidth = availableWidth / chart.data.length;
-        chart.data.forEach((row, index) => {
-          const value = Number(row[chart.y] || 0);
-          const barHeight = maxVal ? (value / maxVal) * (chartCanvas.height - padding * 2) : 0;
-          const x = padding + index * barWidth;
-          const y = chartCanvas.height - padding - barHeight;
-          chartContext.fillStyle = '#2563eb';
-          chartContext.fillRect(x, y, barWidth * 0.6, barHeight);
-          chartContext.fillStyle = '#111827';
-          chartContext.font = '12px sans-serif';
-          chartContext.fillText(String(row[chart.x]), x, chartCanvas.height - padding + 14);
+        const dateFormatter = chart.x === 'month'
+          ? new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' })
+          : null;
+
+        const labels = chart.data.map(row => {
+          const rawLabel = row[chart.x];
+          if (dateFormatter) {
+            const date = new Date(rawLabel);
+            if (!Number.isNaN(date.valueOf())) {
+              return dateFormatter.format(date);
+            }
+          }
+          return rawLabel != null ? String(rawLabel) : '';
         });
-      }
 
-      function drawLineChart(chart) {
-        const padding = 40;
-        const values = chart.data.map(d => Number(d[chart.y] || 0));
-        const maxVal = Math.max(...values);
-        const minVal = Math.min(...values);
-        const range = maxVal - minVal || 1;
-        chartContext.beginPath();
-        chart.data.forEach((row, idx) => {
-          const x = padding + (idx / (chart.data.length - 1)) * (chartCanvas.width - padding * 2);
-          const value = Number(row[chart.y] || 0);
-          const y = chartCanvas.height - padding - ((value - minVal) / range) * (chartCanvas.height - padding * 2);
-          if (idx === 0) {
-            chartContext.moveTo(x, y);
-          } else {
-            chartContext.lineTo(x, y);
+        const dataValues = chart.data.map(row => Number(row[chart.y]) || 0);
+
+        const datasetConfig = chart.type === 'line'
+          ? {
+              label: chart.y,
+              data: dataValues,
+              borderColor: 'rgba(239, 68, 68, 1)',
+              backgroundColor: 'rgba(239, 68, 68, 0.2)',
+              borderWidth: 2,
+              pointRadius: 4,
+              tension: 0.3,
+              fill: false
+            }
+          : {
+              label: chart.y,
+              data: dataValues,
+              backgroundColor: 'rgba(37, 99, 235, 0.6)',
+              borderColor: 'rgba(37, 99, 235, 1)',
+              borderWidth: 1,
+              borderSkipped: false
+            };
+
+        chartInstance = new Chart(chartCanvas, {
+          type: chart.type || 'bar',
+          data: {
+            labels,
+            datasets: [datasetConfig]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              tooltip: { enabled: true },
+              legend: { display: true }
+            },
+            scales: {
+              y: {
+                beginAtZero: true
+              }
+            }
           }
         });
-        chartContext.strokeStyle = '#ef4444';
-        chartContext.lineWidth = 2;
-        chartContext.stroke();
       }
     </script>
   </body>
