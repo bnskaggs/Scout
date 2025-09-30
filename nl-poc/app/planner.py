@@ -17,7 +17,7 @@ from .synonyms import (
     load_synonyms,
     weapon_patterns_from_value,
 )
-from .time_utils import TimeRange, extract_time_range
+from .time_utils import TimeRange, extract_time_range, trailing_year_range
 
 PROMPT_PATH = pathlib.Path(__file__).parent / "llm_prompt_intent.txt"
 SEMANTIC_PATH = pathlib.Path(__file__).parents[1] / "config" / "semantic.yml"
@@ -275,6 +275,16 @@ def _post_process_plan(
         group_by = []
     plan["group_by"] = group_by
     filters = plan.get("filters") or []
+    if not isinstance(filters, list):
+        filters = [filters]
+    if trend_tokens:
+        has_month_filter = any(
+            isinstance(filt, dict) and filt.get("field") == "month"
+            for filt in filters
+        )
+        if not has_month_filter:
+            trailing_range = trailing_year_range()
+            filters = [*filters, trailing_range.to_filter()]
     plan["filters"] = _normalize_filters(question, filters)
     limit_value = plan.get("limit")
     if not top_intent:

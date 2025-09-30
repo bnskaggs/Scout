@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import os
+from datetime import date
 from importlib import reload
 
 from app.planner import build_plan
@@ -41,3 +42,15 @@ def test_load_env_once(tmp_path, monkeypatch):
     assert os.getenv("LLM_PROVIDER") == "openai"
     assert os.getenv("LLM_MODEL") == "gpt-test"
     assert os.getenv("LLM_API_KEY") == "abc123"
+
+
+def test_trend_question_without_dates_gets_trailing_year(monkeypatch):
+    monkeypatch.setattr("app.time_utils.current_date", lambda: date(2024, 5, 15))
+
+    plan = build_plan("Show the trend of incidents by month", prefer_llm=False)
+
+    month_filters = [f for f in plan.get("filters", []) if f.get("field") == "month"]
+    assert month_filters
+    filter_value = month_filters[0]
+    assert filter_value["op"] == "between"
+    assert filter_value["value"] == ["2023-06-01", "2024-06-01"]
