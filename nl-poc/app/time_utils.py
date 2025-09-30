@@ -78,23 +78,31 @@ def parse_relative_range(text: str, today: Optional[date] = None) -> Optional[Ti
     text_l = text.lower()
     if "ytd" in text_l or "year to date" in text_l or "this year to date" in text_l:
         start = date(today.year, 1, 1)
-        end = current_month_start(today)
+        end = _next_month(current_month_start(today))
         return TimeRange(start=start, end=end, label=f"{today.year} YTD")
+    trailing_year_phrases = (
+        "last year",
+        "past year",
+        "over the last year",
+        "over last year",
+        "last 12 months",
+        "past 12 months",
+    )
+    if any(phrase in text_l for phrase in trailing_year_phrases):
+        anchor = current_month_start(today)
+        start = _shift_month(anchor, -11)
+        end = _next_month(anchor)
+        return TimeRange(start=start, end=end, label="Last 12 months")
     if "this year" in text_l:
         start = date(today.year, 1, 1)
         end = date(today.year, 12, 31)
         return TimeRange(start=start, end=end, label=f"{today.year}")
-    if "last year" in text_l:
-        start = date(today.year - 1, 1, 1)
-        end = date(today.year - 1, 12, 31)
-        return TimeRange(start=start, end=end, label=f"{today.year - 1}")
     if "this month" in text_l:
         start = current_month_start(today)
-        return TimeRange(start=start, end=_next_month(start), label=start.strftime("%Y-%m"))
+        return TimeRange(start=start, end=start, label=start.strftime("%Y-%m"), op="=")
     if "last month" in text_l:
         start = previous_month_start(today)
-        end = _next_month(start)
-        return TimeRange(start=start, end=end, label=start.strftime("%Y-%m"), op="=")
+        return TimeRange(start=start, end=start, label=start.strftime("%Y-%m"), op="=")
     if "last 3 months" in text_l or "last three months" in text_l:
         end = current_month_start(today)
         start = _shift_month(previous_month_start(today), -2)
@@ -136,7 +144,7 @@ def parse_month(text: str) -> Optional[TimeRange]:
         year = int(match.group(1))
         month = int(match.group(2))
         start = date(year, month, 1)
-        return TimeRange(start=start, end=_next_month(start), label=start.strftime("%Y-%m"))
+        return TimeRange(start=start, end=start, label=start.strftime("%Y-%m"), op="=")
     return None
 
 

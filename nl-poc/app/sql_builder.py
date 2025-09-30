@@ -56,6 +56,11 @@ def _build_filters(filters: List[Dict[str, object]], semantic: SemanticModel, al
             clauses.append(f"{expr} IN ({joined})")
         elif op == "between" and isinstance(value, list) and len(value) == 2:
             clauses.append(f"{expr} BETWEEN {_format_literal(value[0])} AND {_format_literal(value[1])}")
+        elif op == "like_any" and isinstance(value, list):
+            lowered = [str(v).lower() for v in value if v]
+            if lowered:
+                like_clauses = [f"LOWER({expr}) LIKE {_format_literal(pattern)}" for pattern in lowered]
+                clauses.append("(" + " OR ".join(like_clauses) + ")")
         else:
             clauses.append(f"{expr} {op} {_format_literal(value)}")
     if not clauses:
@@ -67,8 +72,12 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
     metrics = plan.get("metrics", []) or ["incidents"]
     group_by = plan.get("group_by", [])
     filters = plan.get("filters", [])
-    order_by = plan.get("order_by", [])
-    limit = plan.get("limit", 50)
+    order_by = plan.get("order_by") or []
+    raw_limit = plan.get("limit", 0)
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        limit = 0
     compare = plan.get("compare")
     extras = plan.get("extras") or {}
 
@@ -95,6 +104,11 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
     group_clause = ""
     if group_exprs:
         group_clause = "GROUP BY " + ", ".join(group_exprs)
+
+    if not order_by and "month" in group_by:
+        order_by = [{"field": "month", "dir": "asc"}]
+    if not order_by and compare and compare.get("type") in {"mom", "yoy"}:
+        order_by = [{"field": "month", "dir": "asc"}]
 
     if compare and compare.get("type") in {"mom", "yoy"}:
         lag_period = compare.get("periods", 1)
