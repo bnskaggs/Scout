@@ -5,6 +5,7 @@ import json
 import pathlib
 import re
 from dataclasses import dataclass
+from datetime import date
 from typing import Dict, List, Optional
 
 from .llm_client import LLMNotConfigured, call_intent_llm, fill_time_tokens
@@ -285,7 +286,73 @@ def _post_process_plan(
         if not has_month_filter:
             trailing_range = trailing_year_range()
             filters = [*filters, trailing_range.to_filter()]
-    plan["filters"] = _normalize_filters(question, filters)
+    normalized_filters = _normalize_filters(question, filters)
+    plan["filters"] = normalized_filters
+    compare = plan.get("compare")
+    if (
+        isinstance(compare, dict)
+        and compare.get("type") == "mom"
+        and not compare.get("internal_window")
+    ):
+        month_filters = [
+            filt
+            for filt in normalized_filters
+            if isinstance(filt, dict) and filt.get("field") == "month"
+        ]
+        if len(month_filters) == 1:
+            month_filter = month_filters[0]
+            month_op = month_filter.get("op")
+            month_value = month_filter.get("value")
+
+            def _parse_date(value: object) -> Optional[date]:
+                if not value:
+                    return None
+                try:
+                    return date.fromisoformat(str(value))
+                except ValueError:
+                    return None
+
+            def _shift_month(anchor: date, delta: int) -> date:
+                year = anchor.year + ((anchor.month - 1 + delta) // 12)
+                month = (anchor.month - 1 + delta) % 12 + 1
+                return date(year, month, 1)
+
+            start_date: Optional[date] = None
+            next_month_start: Optional[date] = None
+
+            if month_op == "=" or month_op is None:
+                if isinstance(month_value, str):
+                    start_date = _parse_date(month_value)
+                elif isinstance(month_value, list) and month_value:
+                    start_date = _parse_date(month_value[0])
+                if start_date:
+                    next_month_start = _shift_month(start_date, 1)
+            elif (
+                month_op == "between"
+                and isinstance(month_value, list)
+                and len(month_value) >= 2
+            ):
+                start_date = _parse_date(month_value[0])
+                end_date = _parse_date(month_value[1])
+                if start_date and end_date:
+                    if end_date == start_date:
+                        next_month_start = _shift_month(start_date, 1)
+                    else:
+                        expected_end = _shift_month(start_date, 1)
+                        if end_date == expected_end:
+                            next_month_start = end_date
+                        else:
+                            start_date = None
+            if start_date and next_month_start:
+                previous_month = _shift_month(start_date, -1)
+                compare["internal_window"] = {
+                    "field": "month",
+                    "op": "between",
+                    "value": [
+                        previous_month.isoformat(),
+                        next_month_start.isoformat(),
+                    ],
+                }
     limit_value = plan.get("limit")
     if not top_intent:
         plan["limit"] = 0
