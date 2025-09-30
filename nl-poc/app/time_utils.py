@@ -8,6 +8,13 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:  # pragma: no cover - Python < 3.9
+    ZoneInfo = None  # type: ignore[assignment]
+    ZoneInfoNotFoundError = Exception  # type: ignore[assignment]
+
+
 @dataclass
 class TimeRange:
     start: date
@@ -53,7 +60,17 @@ def _next_month(dt: date) -> date:
 
 
 def current_date() -> date:
-    return date.today()
+    """Return today's date using the America/Chicago timezone when available."""
+
+    if ZoneInfo is None:
+        return date.today()
+
+    try:
+        tz = ZoneInfo("America/Chicago")
+    except (ZoneInfoNotFoundError, Exception):  # pragma: no cover - defensive fallback
+        return date.today()
+
+    return datetime.now(tz).date()
 
 
 def current_month_start(today: Optional[date] = None) -> date:
@@ -168,7 +185,10 @@ def parse_year(text: str) -> Optional[TimeRange]:
 def extract_time_range(text: str, today: Optional[date] = None) -> Optional[TimeRange]:
     today = today or current_date()
     for parser in (parse_month, parse_quarter, parse_relative_range, parse_year):
-        result = parser(text)
+        if parser is parse_relative_range:
+            result = parser(text, today=today)
+        else:
+            result = parser(text)
         if result:
             return result
     return None
