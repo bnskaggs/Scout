@@ -1,10 +1,13 @@
-"""Heuristic natural-language planner for the LA crime prototype."""
+"""Hybrid intent planner with LLM primary path and rule-based fallback."""
 from __future__ import annotations
 
+import json
+import pathlib
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
+from .llm_client import LLMNotConfigured, call_intent_llm, fill_time_tokens
 from .synonyms import (
     SHARE_TOKENS,
     SynonymBundle,
@@ -13,6 +16,31 @@ from .synonyms import (
     load_synonyms,
 )
 from .time_utils import TimeRange, extract_time_range
+
+PROMPT_PATH = pathlib.Path(__file__).parent / "llm_prompt_intent.txt"
+SEMANTIC_PATH = pathlib.Path(__file__).parents[1] / "config" / "semantic.yml"
+
+_LAST_ENGINE = "rule_based"
+
+
+def get_last_intent_engine() -> str:
+    """Return the planner engine used for the most recent plan."""
+
+    return _LAST_ENGINE
+
+
+def list_columns_for_prompt() -> List[str]:
+    """Enumerate available columns for the prompt payload."""
+
+    return [
+        '"DATE OCC"',
+        '"AREA NAME"',
+        '"Crm Cd Desc"',
+        '"Premis Desc"',
+        '"Weapon Desc"',
+        '"Vict Age"',
+        '"DR_NO"',
+    ]
 
 
 @dataclass
@@ -138,7 +166,7 @@ def _detect_limit(text: str) -> int:
     return 50
 
 
-def generate_plan(question: str) -> Dict[str, object]:
+def build_plan_rule_based(question: str) -> Dict[str, object]:
     bundle = load_synonyms()
     time_range = extract_time_range(question)
     metrics = ["incidents"]
@@ -169,4 +197,41 @@ def generate_plan(question: str) -> Dict[str, object]:
         compare=compare,
         extras=extras or None,
     )
+    global _LAST_ENGINE
+    _LAST_ENGINE = "rule_based"
     return plan.to_dict()
+
+
+def build_plan_llm(question: str) -> Dict[str, object]:
+    global _LAST_ENGINE
+
+    prompt = fill_time_tokens(PROMPT_PATH.read_text())
+    semantic_yaml = SEMANTIC_PATH.read_text()
+    columns = list_columns_for_prompt()
+    column_catalog = ", ".join(columns)
+
+    # The LLM call itself can raise configuration errors; let them bubble up.
+    raw = call_intent_llm(prompt, semantic_yaml, column_catalog, question)
+
+    try:
+        plan = json.loads(raw)
+        assert isinstance(plan.get("metrics", []), list)
+        assert isinstance(plan.get("group_by", []), list)
+        assert isinstance(plan.get("filters", []), list)
+    except Exception as exc:  # pragma: no cover - defensive path
+        raise RuntimeError(f"LLM returned non-JSON or invalid plan: {raw[:200]}...") from exc
+
+    _LAST_ENGINE = "llm"
+    return plan
+
+
+def build_plan(question: str, prefer_llm: bool = True) -> Dict[str, object]:
+    """Primary planner entry point with LLM fallback."""
+
+    if not prefer_llm:
+        return build_plan_rule_based(question)
+
+    try:
+        return build_plan_llm(question)
+    except (LLMNotConfigured, RuntimeError):
+        return build_plan_rule_based(question)
