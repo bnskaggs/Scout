@@ -267,18 +267,23 @@ def _post_process_plan(
     group_by = plan.get("group_by") or []
     if not isinstance(group_by, list):
         group_by = [group_by]
+    group_by = [dim for dim in group_by if isinstance(dim, str) and dim]
+
     top_intent = _has_rank_intent(question)
-    trend_tokens = ("trend" in text_lower) or ("by month" in text_lower) or ("monthly" in text_lower)
-    if trend_tokens:
+    trend_tokens = any(
+        token in text_lower for token in ("trend", "by month", "monthly", "over time", "over-time")
+    )
+    trend_intent = trend_tokens or any(dim == "month" for dim in group_by)
+    if trend_intent:
         group_by = ["month"]
     compare = plan.get("compare")
-    if compare and not _question_specifies_grouping(question, bundle, group_by):
+    if compare and not trend_intent and not _question_specifies_grouping(question, bundle, group_by):
         group_by = []
     plan["group_by"] = group_by
     filters = plan.get("filters") or []
     if not isinstance(filters, list):
         filters = [filters]
-    if trend_tokens:
+    if trend_intent:
         has_month_filter = any(
             isinstance(filt, dict) and filt.get("field") == "month"
             for filt in filters
@@ -286,8 +291,18 @@ def _post_process_plan(
         if not has_month_filter:
             trailing_range = trailing_year_range()
             filters = [*filters, trailing_range.to_filter()]
+    order_by = plan.get("order_by")
+    if isinstance(order_by, dict):
+        order_by = [order_by]
+    elif not isinstance(order_by, list):
+        order_by = []
+    else:
+        order_by = [entry for entry in order_by if isinstance(entry, dict)]
+    if trend_intent:
+        order_by = [{"field": "month", "dir": "asc"}]
     normalized_filters = _normalize_filters(question, filters)
     plan["filters"] = normalized_filters
+    plan["order_by"] = order_by
     compare = plan.get("compare")
     if (
         isinstance(compare, dict)
