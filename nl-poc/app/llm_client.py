@@ -1,3 +1,4 @@
+
 import json
 import os
 from datetime import date
@@ -6,6 +7,7 @@ try:  # pragma: no cover - optional dependency for runtime environments
     from dateutil.relativedelta import relativedelta
 except ModuleNotFoundError:  # pragma: no cover
     relativedelta = None
+
 
 
 class LLMNotConfigured(Exception):
@@ -21,20 +23,24 @@ def month_start(dt):
     return date(dt.year, dt.month, 1)
 
 
+
 def _shift_months(dt: date, months: int) -> date:
     year_offset, new_month_index = divmod(dt.month - 1 + months, 12)
     return date(dt.year + year_offset, new_month_index + 1, 1)
 
 
+
 def fill_time_tokens(prompt: str, today=None) -> str:
     today = today or date.today()
     cur = current_month_start(today)
+
     if relativedelta is not None:
         prev = month_start(cur - relativedelta(months=1))
         cur_m2 = month_start(cur - relativedelta(months=2))
     else:  # pragma: no cover - fallback when python-dateutil is unavailable
         prev = _shift_months(cur, -1)
         cur_m2 = _shift_months(cur, -2)
+
     return (
         prompt.replace("<CURRENT_MONTH_START>", cur.isoformat())
         .replace("<PREV_MONTH_START>", prev.isoformat())
