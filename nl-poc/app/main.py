@@ -1,17 +1,19 @@
 """FastAPI entrypoint for the NL analytics proof-of-concept."""
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import duckdb
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import guardrails, planner, sql_builder, viz
+from . import guardrails, sql_builder, viz
 from .executor import DuckDBExecutor
+from .planner import build_plan, get_last_intent_engine
 from .resolver import PlanResolutionError, PlanResolver, load_semantic_model
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -23,6 +25,7 @@ SEMANTIC_PATH = CONFIG_DIR / "semantic.yml"
 
 class AskRequest(BaseModel):
     question: str
+    use_llm: Optional[bool] = None
 
 
 app = FastAPI(title="Scout NL Analytics POC")
@@ -164,7 +167,11 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
     resolver: PlanResolver = _state["resolver"]
     semantic = _state["semantic"]
 
-    plan = planner.generate_plan(question)
+    prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
+    prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
+
+    plan = build_plan(question, prefer_llm=prefer_llm)
+    intent_engine = get_last_intent_engine()
     try:
         resolved_plan = resolver.resolve(plan)
     except PlanResolutionError as exc:
@@ -196,6 +203,7 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
             "runtime_ms": result.runtime_ms,
         },
     }
+    response["intent_engine"] = intent_engine
     _state["last_debug"] = {
         "plan": resolved_plan,
         "sql": sql,

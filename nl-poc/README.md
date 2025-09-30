@@ -49,6 +49,16 @@ nl-poc/
 
 `eval/questions.yaml` contains 20 representative questions for manual or automated testing.
 
+## Enabling LLM Intent Parsing
+
+By default the service uses the heuristic planner. To enable the LLM-powered intent agent:
+
+1. Copy `config/settings.example.env` to `.env` (or export the variables in your shell).
+2. Set `INTENT_USE_LLM=true` and provide `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_KEY` values for your provider.
+3. Restart the API so the new environment variables take effect.
+
+When the LLM settings are omitted or the call fails, the service automatically falls back to the rule-based planner.
+
 ## Notes
 
 - The planner uses heuristic parsing suitable for demonstration purposes.
