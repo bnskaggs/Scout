@@ -91,6 +91,9 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
     except (TypeError, ValueError):
         limit = 0
     compare = plan.get("compare")
+    compare_dict = compare if isinstance(compare, dict) else {}
+    compare_type = compare_dict.get("type")
+    internal_window = compare_dict.get("internal_window") if compare_type == "mom" else None
     extras = plan.get("extras") or {}
 
     base_cte = "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw)"
@@ -112,6 +115,22 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
 
     select_clause = ", ".join(select_parts + metric_exprs)
     where_clause = _build_filters(filters, semantic, alias="base")
+    agg_filters = filters
+    agg_where_clause = where_clause
+    if internal_window:
+        month_replaced = False
+        updated_filters: List[Dict[str, object]] = []
+        for filt in filters:
+            if isinstance(filt, dict) and filt.get("field") == "month":
+                if not month_replaced:
+                    updated_filters.append(internal_window)
+                    month_replaced = True
+                continue
+            updated_filters.append(filt)
+        if not month_replaced:
+            updated_filters.append(internal_window)
+        agg_filters = updated_filters
+        agg_where_clause = _build_filters(agg_filters, semantic, alias="base")
 
     group_clause = ""
     if group_exprs:
@@ -119,11 +138,11 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
 
     if not order_by and "month" in group_by:
         order_by = [{"field": "month", "dir": "asc"}]
-    if not order_by and compare and compare.get("type") in {"mom", "yoy"}:
+    if not order_by and compare_type in {"mom", "yoy"}:
         order_by = [{"field": "month", "dir": "asc"}]
 
-    if compare and compare.get("type") in {"mom", "yoy"}:
-        lag_period = compare.get("periods", 1)
+    if compare_type in {"mom", "yoy"}:
+        lag_period = compare_dict.get("periods", 1)
         agg_select = select_parts.copy()
         month_expr = dimension_expression("month", semantic, alias="base")
         agg_select.append(f"{month_expr} AS month")
@@ -168,10 +187,12 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
             "ELSE (incidents - prior_incidents) * 100.0 / prior_incidents END AS change_pct, month FROM ranked"
         )
         if internal_window:
+
             month_filters = [filt for filt in filters if filt.get("field") == "month"]
             month_clause = _build_filters(month_filters, semantic) if month_filters else ""
             if month_clause:
                 final_sql += f" {month_clause}"
+
         if order_by:
             final_sql += f" {_build_order_clause(order_by)}"
         if limit:
