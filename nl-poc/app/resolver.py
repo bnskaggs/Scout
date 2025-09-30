@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -82,6 +83,12 @@ class PlanResolver:
     def __init__(self, semantic: SemanticModel, executor: DuckDBExecutor):
         self.semantic = semantic
         self.executor = executor
+
+    @staticmethod
+    def _shift_month(anchor: date, delta: int) -> date:
+        year = anchor.year + ((anchor.month - 1 + delta) // 12)
+        month = (anchor.month - 1 + delta) % 12 + 1
+        return date(year, month, 1)
 
     def _should_bypass_value_resolution(self, op: Optional[str]) -> bool:
         if not op:
@@ -176,6 +183,17 @@ class PlanResolver:
         }
         if compare:
             resolved_plan["compare"] = compare
+            if compare.get("type") == "mom" and time_range and time_range.start == time_range.end:
+                month_filters = [f for f in filters if f.get("field") == "month"]
+                if month_filters:
+                    target_start = time_range.start
+                    start = self._shift_month(target_start, -1)
+                    end = self._shift_month(target_start, 1)
+                    resolved_plan["internal_window"] = {
+                        "field": "month",
+                        "op": "between",
+                        "value": [start.isoformat(), end.isoformat()],
+                    }
         resolved_plan["time_window_label"] = describe_time_range(time_range)
         return resolved_plan
 
