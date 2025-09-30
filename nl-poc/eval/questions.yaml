@@ -1,21 +1,38 @@
 questions:
-  - "Top 10 crime types citywide in 2024-YTD; include MoM %."
-  - "Incidents by area for 2023-06; show rank and share of city total."
-  - "Hollywood: which premise types had the largest MoM increase in 2024-08?"
-  - "Central vs Hollywood: compare weapon categories in 2024-Q2."
-  - "Top 10 areas by robbery in 2024 YTD with a trend line."
-  - "What were the top 5 weapon categories last month?"
-  - "Show incidents in Downtown by premise for 2024-03."
-  - "Give me incidents by area year to date."
-  - "Which crime types rose the most month over month in 2023-12?"
-  - "Compare Hollywood and Wilshire areas for weapon usage in Q1 2024."
-  - "How many incidents citywide in 2022?"
-  - "List the bottom 5 areas by incidents in 2024-05."
-  - "What premises in Hollywood had the biggest drop MoM in 2024-07?"
-  - "Trend of burglaries by month in 2023."
-  - "Victim age distribution for 2024-Q2."
-  - "Incidents involving firearms in Central during 2024-04."
-  - "Top 10 areas for robbery this month."
-  - "Compare assaults in 2023 vs 2024 YTD."
-  - "Incidents by weapon for Venice in 2024-02; include MoM change."
-  - "Show trend of total incidents for the city over the last year."
+  - q: "Top 10 crime types citywide in 2024-YTD; include MoM %."
+  - q: "Incidents by area for 2023-06; show share of city total."
+    expect:
+      cols: ["area", "incidents", "share_city"]
+      rules:
+        - "month==2023-06-01"
+        - "share_city_sum≈1.0"
+        - "sorted:incidents:desc"
+  - q: "Hollywood: which premise types had the largest MoM increase in 2024-08?"
+  - q: "Central vs Hollywood: compare weapon categories in 2024-Q2."
+    expect:
+      cols: ["weapon", "area", "incidents"]
+      rules:
+        - "months==[2024-04-01..2024-06-01]"
+        - "areas=={Central,Hollywood}"
+  - q: "Top 10 areas by robbery in 2024 YTD with a trend line."
+  - q: "What were the top 5 weapon categories across all areas last month?"
+    expect:
+      cols: ["weapon", "incidents"]
+      rules:
+        - "limit==5"
+        - "sorted:incidents:desc"
+        - "month==<PREV_MONTH_START>"
+  - q: "Show incidents in Downtown by premise for 2024-03."
+  - q: "Give me incidents by area year to date."
+  - q: "Which crime types rose the most month over month in 2023-12?"
+  - q: "Compare Hollywood and Wilshire areas for weapon usage in Q1 2024."
+  - q: "How many incidents citywide in 2022?"
+  - q: "List the bottom 5 areas by incidents in 2024-05."
+  - q: "What premises in Hollywood had the biggest drop MoM in 2024-07?"
+  - q: "Trend of burglaries by month in 2023."
+  - q: "Victim age distribution for 2024-Q2."
+  - q: "Incidents involving firearms in Central during 2024-04."
+  - q: "Top 10 areas for robbery this month."
+  - q: "Compare assaults in 2023 vs 2024 YTD."
+  - q: "Incidents by weapon for Venice in 2024-02; include MoM change."
+  - q: "Show trend of total incidents for the city over the last year."
