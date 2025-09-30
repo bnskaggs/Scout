@@ -8,6 +8,19 @@ try:  # pragma: no cover - optional dependency for runtime environments
 except ModuleNotFoundError:  # pragma: no cover
     relativedelta = None
 
+try:  # pragma: no cover - optional dependency for runtime environments
+    from openai import OpenAI
+except ModuleNotFoundError:  # pragma: no cover
+    OpenAI = None
+
+try:  # pragma: no cover - optional dependency for runtime environments
+    from openai import OpenAIError  # type: ignore[attr-defined]
+except (ModuleNotFoundError, ImportError):  # pragma: no cover
+    try:  # pragma: no cover
+        from openai import APIError as OpenAIError  # type: ignore[attr-defined]
+    except (ModuleNotFoundError, ImportError):  # pragma: no cover
+        OpenAIError = Exception
+
 
 
 class LLMNotConfigured(Exception):
@@ -59,30 +72,36 @@ def call_intent_llm(prompt_text: str, semantic_yaml: str, column_catalog: list, 
     if not provider or not model or not api_key:
         raise LLMNotConfigured("Missing LLM_PROVIDER/LLM_MODEL/LLM_API_KEY")
 
-    # ---- Replace this block with your provider-specific call. ----
-    # Pseudocode example for OpenAI Chat Completions:
-    #
-    # from openai import OpenAI
-    # client = OpenAI(api_key=api_key)
-    # sys_prompt = fill_time_tokens(prompt_text)
-    # columns = ", ".join(column_catalog)
-    # user_payload = (
-    #     "Semantic spec:\n```yaml\n"
-    #     + semantic_yaml
-    #     + "\n```\n\nColumns:\n"
-    #     + columns
-    #     + "\n\nQuestion:\n"
-    #     + question
-    # )
-    # resp = client.chat.completions.create(
-    #   model=model,
-    #   messages=[{"role":"system","content": sys_prompt},
-    #             {"role":"user","content": user_payload}],
-    #   temperature=0
-    # )
-    # return resp.choices[0].message.content.strip()
-    #
-    # --------------------------------------------------------------
+    if provider != "openai":  # pragma: no cover - only OpenAI is currently supported
+        raise LLMNotConfigured(f"Unsupported LLM provider: {provider}")
 
-    # For now, raise so the caller can fall back to rule-based parsing.
-    raise LLMNotConfigured("Stub: wire your provider in app/llm_client.py")
+    if OpenAI is None:  # pragma: no cover - SDK is optional at install time
+        raise LLMNotConfigured("openai SDK is not installed")
+
+    sys_prompt = fill_time_tokens(prompt_text)
+    columns = ", ".join(column_catalog)
+    user_payload = (
+        "Semantic spec:\n```yaml\n"
+        + semantic_yaml
+        + "\n```\n\nColumns:\n"
+        + columns
+        + "\n\nQuestion:\n"
+        + question
+    )
+
+    try:  # pragma: no cover - networked call
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model=model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_payload},
+            ],
+        )
+    except OpenAIError as exc:  # pragma: no cover - networked call
+        raise RuntimeError("OpenAI chat completion failed") from exc
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        raise RuntimeError("OpenAI chat completion failed") from exc
+
+    return resp.choices[0].message.content.strip()
