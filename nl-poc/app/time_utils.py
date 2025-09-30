@@ -127,6 +127,16 @@ def parse_relative_range(text: str, today: Optional[date] = None) -> Optional[Ti
     return None
 
 
+def trailing_year_range(today: Optional[date] = None) -> TimeRange:
+    """Return a time range covering the trailing 12 months."""
+
+    today = today or current_date()
+    anchor = current_month_start(today)
+    start = _shift_month(anchor, -11)
+    end = _next_month(anchor)
+    return TimeRange(start=start, end=end, label="Last 12 months")
+
+
 def parse_quarter(text: str) -> Optional[TimeRange]:
     match = _QUARTER_PATTERN.search(text)
     if not match:
