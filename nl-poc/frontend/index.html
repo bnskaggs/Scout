@@ -50,6 +50,7 @@
         box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
         margin-top: 1.5rem;
       }
+
       .result-header {
         display: flex;
         align-items: center;
@@ -73,6 +74,43 @@
         padding: 0.25rem 0.75rem;
         font-size: 0.85rem;
         font-weight: 600;
+
+      .error-panel {
+        display: none;
+        margin-top: 1rem;
+        padding: 1rem;
+        border-radius: 6px;
+        border: 1px solid #fca5a5;
+        background: #fee2e2;
+        color: #7f1d1d;
+      }
+      .error-panel h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1rem;
+        font-weight: 600;
+      }
+      .error-message {
+        margin: 0 0 0.75rem;
+      }
+      .suggestions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .suggestion-pill {
+        background: #fff;
+        border: 1px solid #fca5a5;
+        border-radius: 999px;
+        color: #7f1d1d;
+        padding: 0.35rem 0.85rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+        transition: background 0.2s ease, color 0.2s ease;
+      }
+      .suggestion-pill:hover {
+        background: #fca5a5;
+        color: #fff;
+
       }
       pre {
         background: #111827;
@@ -111,7 +149,11 @@
           <input id="question" type="text" placeholder="Ask about crime incidents..." />
           <button id="ask-btn">Ask</button>
         </div>
-        <p id="status"></p>
+        <div id="error-panel" class="error-panel">
+          <h3>Error</h3>
+          <p id="error-message" class="error-message"></p>
+          <div id="suggestions" class="suggestions"></div>
+        </div>
       </div>
       <div class="card" id="result-card" style="display: none;">
         <div class="result-header">
@@ -131,10 +173,13 @@
         </details>
       </div>
     </main>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
       const askBtn = document.getElementById('ask-btn');
       const questionInput = document.getElementById('question');
-      const statusEl = document.getElementById('status');
+      const errorPanel = document.getElementById('error-panel');
+      const errorMessageEl = document.getElementById('error-message');
+      const suggestionsContainer = document.getElementById('suggestions');
       const answerEl = document.getElementById('answer');
       const resultCard = document.getElementById('result-card');
       const sqlEl = document.getElementById('sql');
@@ -142,18 +187,33 @@
       const lineageEl = document.getElementById('lineage');
       const tableContainer = document.getElementById('table-container');
       const chartCanvas = document.getElementById('chart');
+
       const resultMeta = document.getElementById('result-meta');
       let chartContext = chartCanvas.getContext('2d');
+
+      let chartInstance;
+
       const apiBase = window.location.port === '3000' ? 'http://127.0.0.1:8000' : window.location.origin;
 
-      askBtn.addEventListener('click', async () => {
-        const question = questionInput.value.trim();
+      askBtn.addEventListener('click', () => submitQuestion(questionInput.value));
+      questionInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          submitQuestion(questionInput.value);
+        }
+      });
+
+      async function submitQuestion(rawQuestion) {
+        const question = rawQuestion.trim();
         if (!question) {
-          statusEl.textContent = 'Please enter a question.';
+          showErrorPanel('Please enter a question.');
           return;
         }
+
+        hideErrorPanel();
+        const originalButtonText = askBtn.textContent;
         askBtn.disabled = true;
-        statusEl.textContent = 'Thinking...';
+        askBtn.textContent = 'Thinking...';
+
         try {
           const response = await fetch(`${apiBase}/ask`, {
             method: 'POST',
@@ -161,18 +221,60 @@
             body: JSON.stringify({ question })
           });
           if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail?.message || error.detail || 'Request failed');
+            let errorDetail = {};
+            try {
+              errorDetail = await response.json();
+            } catch (parseErr) {
+              // ignore JSON parse errors and fallback to generic message
+            }
+            const detail = errorDetail?.detail ?? errorDetail;
+            const message = typeof detail === 'string' ? detail : detail?.message || 'Request failed';
+            const suggestions = Array.isArray(detail?.suggestions) ? detail.suggestions : [];
+            const err = new Error(message);
+            err.suggestions = suggestions;
+            throw err;
           }
           const data = await response.json();
           renderResult(data);
-          statusEl.textContent = '';
         } catch (err) {
-          statusEl.textContent = err.message;
+          const message = err?.message || 'Something went wrong';
+          const suggestions = Array.isArray(err?.suggestions) ? err.suggestions : [];
+          showErrorPanel(message, suggestions);
         } finally {
           askBtn.disabled = false;
+          askBtn.textContent = originalButtonText;
         }
-      });
+      }
+
+      function hideErrorPanel() {
+        errorPanel.style.display = 'none';
+        errorMessageEl.textContent = '';
+        suggestionsContainer.innerHTML = '';
+      }
+
+      function showErrorPanel(message, suggestions = []) {
+        errorMessageEl.textContent = message;
+        suggestionsContainer.innerHTML = '';
+
+        if (suggestions.length) {
+          suggestions.forEach(suggestion => {
+            const button = document.createElement('button');
+            button.className = 'suggestion-pill';
+            button.type = 'button';
+            button.textContent = suggestion;
+            button.addEventListener('click', () => {
+              questionInput.value = suggestion;
+              submitQuestion(suggestion);
+            });
+            suggestionsContainer.appendChild(button);
+          });
+          suggestionsContainer.style.display = 'flex';
+        } else {
+          suggestionsContainer.style.display = 'none';
+        }
+
+        errorPanel.style.display = 'block';
+      }
 
       function renderResult(data) {
         resultCard.style.display = 'block';
@@ -239,58 +341,76 @@
       }
 
       function renderChart(chart) {
+        if (chartInstance) {
+          chartInstance.destroy();
+          chartInstance = null;
+        }
+
         if (!chart || !chart.data || !chart.data.length) {
-          chartContext.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+          const context = chartCanvas.getContext('2d');
+          if (context) {
+            context.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+          }
           return;
         }
-        const width = chartCanvas.width;
-        const height = chartCanvas.height;
-        chartContext.clearRect(0, 0, width, height);
-        if (chart.type === 'line') {
-          drawLineChart(chart);
-        } else {
-          drawBarChart(chart);
-        }
-      }
 
-      function drawBarChart(chart) {
-        const padding = 40;
-        const availableWidth = chartCanvas.width - padding * 2;
-        const maxVal = Math.max(...chart.data.map(d => Number(d[chart.y] || 0)));
-        const barWidth = availableWidth / chart.data.length;
-        chart.data.forEach((row, index) => {
-          const value = Number(row[chart.y] || 0);
-          const barHeight = maxVal ? (value / maxVal) * (chartCanvas.height - padding * 2) : 0;
-          const x = padding + index * barWidth;
-          const y = chartCanvas.height - padding - barHeight;
-          chartContext.fillStyle = '#2563eb';
-          chartContext.fillRect(x, y, barWidth * 0.6, barHeight);
-          chartContext.fillStyle = '#111827';
-          chartContext.font = '12px sans-serif';
-          chartContext.fillText(String(row[chart.x]), x, chartCanvas.height - padding + 14);
+        const dateFormatter = chart.x === 'month'
+          ? new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' })
+          : null;
+
+        const labels = chart.data.map(row => {
+          const rawLabel = row[chart.x];
+          if (dateFormatter) {
+            const date = new Date(rawLabel);
+            if (!Number.isNaN(date.valueOf())) {
+              return dateFormatter.format(date);
+            }
+          }
+          return rawLabel != null ? String(rawLabel) : '';
         });
-      }
 
-      function drawLineChart(chart) {
-        const padding = 40;
-        const values = chart.data.map(d => Number(d[chart.y] || 0));
-        const maxVal = Math.max(...values);
-        const minVal = Math.min(...values);
-        const range = maxVal - minVal || 1;
-        chartContext.beginPath();
-        chart.data.forEach((row, idx) => {
-          const x = padding + (idx / (chart.data.length - 1)) * (chartCanvas.width - padding * 2);
-          const value = Number(row[chart.y] || 0);
-          const y = chartCanvas.height - padding - ((value - minVal) / range) * (chartCanvas.height - padding * 2);
-          if (idx === 0) {
-            chartContext.moveTo(x, y);
-          } else {
-            chartContext.lineTo(x, y);
+        const dataValues = chart.data.map(row => Number(row[chart.y]) || 0);
+
+        const datasetConfig = chart.type === 'line'
+          ? {
+              label: chart.y,
+              data: dataValues,
+              borderColor: 'rgba(239, 68, 68, 1)',
+              backgroundColor: 'rgba(239, 68, 68, 0.2)',
+              borderWidth: 2,
+              pointRadius: 4,
+              tension: 0.3,
+              fill: false
+            }
+          : {
+              label: chart.y,
+              data: dataValues,
+              backgroundColor: 'rgba(37, 99, 235, 0.6)',
+              borderColor: 'rgba(37, 99, 235, 1)',
+              borderWidth: 1,
+              borderSkipped: false
+            };
+
+        chartInstance = new Chart(chartCanvas, {
+          type: chart.type || 'bar',
+          data: {
+            labels,
+            datasets: [datasetConfig]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              tooltip: { enabled: true },
+              legend: { display: true }
+            },
+            scales: {
+              y: {
+                beginAtZero: true
+              }
+            }
           }
         });
-        chartContext.strokeStyle = '#ef4444';
-        chartContext.lineWidth = 2;
-        chartContext.stroke();
       }
     </script>
   </body>

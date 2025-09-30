@@ -92,9 +92,17 @@ def parse_relative_range(text: str, today: Optional[date] = None) -> Optional[Ti
     if month_window_match:
         qualifier, months_str = month_window_match.groups()
         months = int(months_str)
-        end = current_month_start(today)
-        start = _shift_month(end, -months)
-        label_prefix = "Past" if qualifier == "past" else "Last"
+        anchor = current_month_start(today)
+        if qualifier == "past":
+            end = anchor
+            if today == _end_of_month(today.year, today.month):
+                end = _next_month(anchor)
+            start = _shift_month(end, -months)
+            label_prefix = "Past"
+        else:
+            end = anchor
+            start = _shift_month(end, -months)
+            label_prefix = "Last"
         return TimeRange(start=start, end=end, label=f"{label_prefix} {months} months")
     trailing_year_phrases = (
         "last year",
