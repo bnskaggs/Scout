@@ -128,12 +128,31 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
         month_expr = dimension_expression("month", semantic, alias="base")
         agg_select.append(f"{month_expr} AS month")
         agg_metrics = ["COUNT(*) AS incidents"]
+        agg_filters = filters
+        internal_window = None
+        if compare.get("type") == "mom":
+            internal_window = plan.get("internal_window")
+            if internal_window:
+                replaced = False
+                agg_filters = []
+                for filt in filters:
+                    if filt.get("field") == "month":
+                        agg_filters.append(internal_window)
+                        replaced = True
+                    else:
+                        agg_filters.append(filt)
+                if not replaced:
+                    agg_filters.append(internal_window)
+        if internal_window:
+            agg_where_clause = _build_filters(agg_filters, semantic, alias="base")
+        else:
+            agg_where_clause = where_clause
         agg_sql = f"SELECT {', '.join(agg_select + agg_metrics)} FROM base"
         agg_group_exprs = group_exprs.copy()
         if month_expr not in agg_group_exprs:
             agg_group_exprs.append(month_expr)
-        if where_clause:
-            agg_sql += f" {where_clause}"
+        if agg_where_clause:
+            agg_sql += f" {agg_where_clause}"
         if agg_group_exprs:
             agg_sql += " GROUP BY " + ", ".join(agg_group_exprs)
         partition_clause = _build_partition_clause(group_by)
@@ -148,6 +167,11 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
             f"{compare_sql} SELECT {prefix}incidents, CASE WHEN prior_incidents IS NULL OR prior_incidents = 0 THEN NULL "
             "ELSE (incidents - prior_incidents) * 100.0 / prior_incidents END AS change_pct, month FROM ranked"
         )
+        if internal_window:
+            month_filters = [filt for filt in filters if filt.get("field") == "month"]
+            month_clause = _build_filters(month_filters, semantic) if month_filters else ""
+            if month_clause:
+                final_sql += f" {month_clause}"
         if order_by:
             final_sql += f" {_build_order_clause(order_by)}"
         if limit:
