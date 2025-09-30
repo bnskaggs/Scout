@@ -205,13 +205,14 @@ def build_plan_rule_based(question: str) -> Dict[str, object]:
 def build_plan_llm(question: str) -> Dict[str, object]:
     global _LAST_ENGINE
 
-    prompt = fill_time_tokens(PROMPT_PATH.read_text())
+
+    prompt = fill_time_tokens(PROMPT_PATH.read_text(encoding="utf-8"))
     semantic_yaml = SEMANTIC_PATH.read_text()
     columns = list_columns_for_prompt()
-    column_catalog = ", ".join(columns)
 
     # The LLM call itself can raise configuration errors; let them bubble up.
-    raw = call_intent_llm(prompt, semantic_yaml, column_catalog, question)
+    raw = call_intent_llm(prompt, semantic_yaml, columns, question)
+
 
     try:
         plan = json.loads(raw)
