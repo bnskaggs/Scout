@@ -38,7 +38,7 @@ nl-poc/
 ## API Endpoints
 
 - `GET /health` – returns service status.
-- `POST /ask` – accepts `{ "question": "..." }` and returns the analysis payload including SQL, plan, narrative, table, chart spec, and lineage.
+- `POST /ask` – accepts `{ "question": "..." }` and returns the analysis payload including SQL, plan, narrative, table, chart spec, lineage, and execution metadata (`engine`, `runtime_ms`, `rowcount`).
 - `GET /explain_last` – debugging endpoint returning the last executed plan and SQL.
 
 ## Semantic Configuration

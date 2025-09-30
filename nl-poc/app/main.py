@@ -208,6 +208,9 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
         "chart": chart,
         "sql": sql,
         "plan": resolved_plan,
+        "engine": intent_engine,
+        "runtime_ms": result.runtime_ms,
+        "rowcount": result.rowcount,
         "lineage": {
             "metric_defs": metric_defs,
             "time_window": resolved_plan.get("time_window_label", "All time"),
@@ -216,7 +219,6 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
             "runtime_ms": result.runtime_ms,
         },
     }
-    response["intent_engine"] = intent_engine
     _state["last_debug"] = {
         "plan": resolved_plan,
         "sql": sql,
