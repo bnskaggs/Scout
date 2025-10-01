@@ -85,6 +85,42 @@ def parse_relative_range(text: str, today: Optional[date] = None) -> Optional[Ti
     today = today or current_date()
     text_l = text.lower()
     if "ytd" in text_l or "year to date" in text_l or "this year to date" in text_l:
+        # Check for multi-year YTD patterns like "2023 vs 2024 YTD" first
+        multi_year_ytd = re.search(
+            r'\b(20\d{2})\s*(?:vs\.?|and|to|through|-)\s*(20\d{2})\s+ytd\b',
+            text_l
+        )
+        if multi_year_ytd:
+            year1 = int(multi_year_ytd.group(1))
+            year2 = int(multi_year_ytd.group(2))
+            start_year = min(year1, year2)
+            end_year = max(year1, year2)
+            start = date(start_year, 1, 1)
+            # YTD for the end year
+            if end_year == today.year:
+                end = _next_month(current_month_start(today))
+            else:
+                end = _next_month(date(end_year, min(today.month, 12), 1))
+            return TimeRange(start=start, end=end, label=f"{start_year} vs {end_year} YTD")
+
+        # Check for explicit year in "YYYY YTD" pattern
+        ytd_year_match = re.search(r'\b(20\d{2})\s+ytd\b', text_l)
+        if ytd_year_match:
+            year = int(ytd_year_match.group(1))
+            start = date(year, 1, 1)
+            # If year is current year, use current month; otherwise use end of year
+            if year == today.year:
+                end = _next_month(current_month_start(today))
+            else:
+                # For past years, YTD means through the same month of that year
+                # For future years or completed years, through end of year
+                if year < today.year:
+                    # Use same month as today, but in that year
+                    end = _next_month(date(year, min(today.month, 12), 1))
+                else:
+                    end = date(year, 12, 31)
+            return TimeRange(start=start, end=end, label=f"{year} YTD")
+        # Default: current year YTD
         start = date(today.year, 1, 1)
         end = _next_month(current_month_start(today))
         return TimeRange(start=start, end=end, label=f"{today.year} YTD")
@@ -112,7 +148,7 @@ def parse_relative_range(text: str, today: Optional[date] = None) -> Optional[Ti
     )
     if any(phrase in text_l for phrase in trailing_year_phrases):
         anchor = current_month_start(today)
-        start = _shift_month(anchor, -11)
+        start = _shift_month(anchor, -12)  # Go back 12 months (same month last year)
         end = _next_month(anchor)
         return TimeRange(start=start, end=end, label="Last 12 months")
     if "this year" in text_l:
@@ -164,7 +200,7 @@ def trailing_year_range(today: Optional[date] = None) -> TimeRange:
 
     today = today or current_date()
     anchor = current_month_start(today)
-    start = _shift_month(anchor, -11)
+    start = _shift_month(anchor, -12)  # Go back 12 months (same month last year)
     end = _next_month(anchor)
     return TimeRange(start=start, end=end, label="Last 12 months")
 
@@ -200,6 +236,38 @@ def parse_year(text: str) -> Optional[TimeRange]:
     matches = list(_YEAR_PATTERN.finditer(text))
     if not matches:
         return None
+
+    # Check for multi-year patterns like "2023 vs 2024" or "2023 and 2024"
+    if len(matches) >= 2:
+        years = [int(m.group(1)) for m in matches]
+        # Look for "vs", "and", "to" between years
+        multi_year_pattern = re.search(
+            r'\b(20\d{2})\s*(?:vs\.?|and|to|through|-)\s*(20\d{2})\b',
+            text,
+            re.IGNORECASE
+        )
+        if multi_year_pattern:
+            year1 = int(multi_year_pattern.group(1))
+            year2 = int(multi_year_pattern.group(2))
+            start_year = min(year1, year2)
+            end_year = max(year1, year2)
+            start = date(start_year, 1, 1)
+
+            # Check if second year has YTD qualifier
+            ytd_after = re.search(
+                rf'\b{end_year}\s+ytd\b',
+                text.lower()
+            )
+            if ytd_after:
+                # End at next month of current month in end_year
+                today = current_date()
+                end = _next_month(date(end_year, min(today.month, 12), 1))
+            else:
+                end = date(end_year, 12, 31)
+
+            label = f"{start_year}-{end_year}" if not ytd_after else f"{start_year} vs {end_year} YTD"
+            return TimeRange(start=start, end=end, label=label)
+
     # prefer the last occurrence to capture more specific context like "in 2023"
     year = int(matches[-1].group(1))
     start = date(year, 1, 1)

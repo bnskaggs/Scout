@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python tests/test_time_filters.py)",
+      "Bash(python tests/test_like_filters.py)",
+      "Bash(python tests/test_mom_single_month.py)",
+      "Bash(python tests/test_trend_defaults.py)",
+      "Bash(python tests/test_executor_rowcap.py)",
+      "Bash(python tests:*)",
+      "Bash(python -m pytest tests/test_compare_ytd.py -v)",
+      "Bash(python tests/test_compare_ytd.py)",
+      "Bash(python:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

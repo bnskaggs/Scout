@@ -84,3 +84,21 @@ def test_multi_month_mom_keeps_original_window(monkeypatch):
     assert "WHERE month = DATE" not in sql
     assert "2024-06-01" not in sql
     assert "2024-11-01" not in sql
+
+
+if __name__ == "__main__":
+    test_single_month_mom_expands_internal_window()
+    print("PASS: test_single_month_mom_expands_internal_window")
+
+    class MockMonkeypatch:
+        def setattr(self, path, func):
+            module_path, attr = path.rsplit(".", 1)
+            parts = module_path.split(".")
+            import sys
+            mod = sys.modules[parts[0]]
+            for part in parts[1:]:
+                mod = getattr(mod, part)
+            setattr(mod, attr, func)
+
+    test_multi_month_mom_keeps_original_window(MockMonkeypatch())
+    print("PASS: test_multi_month_mom_keeps_original_window")

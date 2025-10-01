@@ -125,13 +125,19 @@ def _detect_filters(text: str, bundle: SynonymBundle, time_range: Optional[TimeR
             if value:
                 filters.append({"field": canonical, "op": "=", "value": value.title()})
     # fallback: capture "in Hollywood"-style fragments as area filters
-    for match in re.finditer(r"\b(?:in|for|at)\s+([A-Za-z][A-Za-z\s]+)", text):
+    # Limit to 1-3 words to avoid capturing full phrases
+    for match in re.finditer(r"\b(?:in|for|at)\s+([A-Z][A-Za-z]{2,}(?:\s+[A-Z][A-Za-z]+){0,2})\b", text):
         candidate = match.group(1).strip().strip(",")
         if not candidate:
             continue
         if re.search(r"\b20\d{2}\b", candidate):
             continue
         if any(candidate.lower().startswith(prefix) for prefix in ("last", "this")):
+            continue
+        # Skip if candidate contains comparison/ranking keywords
+        candidate_lower = candidate.lower()
+        skip_keywords = ("biggest", "largest", "most", "drop", "increase", "change", "mom", "yoy", "had", "have", "with")
+        if any(keyword in candidate_lower for keyword in skip_keywords):
             continue
         filters.append({"field": "area", "op": "=", "value": candidate.title()})
     # detect explicit quoted filters

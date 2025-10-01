@@ -15,6 +15,7 @@ class QueryResult:
     records: List[Dict[str, object]]
     runtime_ms: float
     rowcount: int
+    truncated: bool = False
 
 
 class DuckDBExecutor:
@@ -30,14 +31,31 @@ class DuckDBExecutor:
     def parse_date(self, value: str) -> date:
         return datetime.fromisoformat(value).date()
 
-    def query(self, sql: str) -> QueryResult:
+    def query(self, sql: str, max_rows: int = 10_000) -> QueryResult:
+        """
+        Execute SQL and stream results up to max_rows.
+        If result set exceeds max_rows, sets truncated=True.
+        """
         start = time.perf_counter()
         result = self._conn.execute(sql)
         columns = [desc[0] for desc in result.description]
-        rows = result.fetchall()
-        records = [dict(zip(columns, row)) for row in rows]
+
+        # Stream rows up to the limit
+        records: List[Dict[str, object]] = []
+        truncated = False
+        for idx, row in enumerate(result.fetchall()):
+            if idx >= max_rows:
+                truncated = True
+                break
+            records.append(dict(zip(columns, row)))
+
         runtime_ms = (time.perf_counter() - start) * 1000
-        return QueryResult(records=records, runtime_ms=runtime_ms, rowcount=len(records))
+        return QueryResult(
+            records=records,
+            runtime_ms=runtime_ms,
+            rowcount=len(records),
+            truncated=truncated
+        )
 
     def find_closest_value(self, dimension, value: str) -> Optional[str]:
         if not value:

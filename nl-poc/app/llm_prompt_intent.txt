@@ -63,8 +63,125 @@ OUTPUT JSON SCHEMA
 
 RULES
 - Use only allowed metrics/dimensions.
-- Default limit=10 when the question implies “top/rank” and no limit given.
+- Default limit=10 when the question implies "top/rank" and no limit given.
 - For ranges use {"field":"month","op":"between","value":["YYYY-MM-01","YYYY-MM-01"]}.
 - DO NOT correct typos; put suggestions in `errors`:
   "Unknown area 'Hoolywood'. Try: Hollywood, West LA, Central."
 - RETURN ONLY JSON. NO SQL, NO PROSE.
+
+WORKED EXAMPLES
+
+Example 1: Single month equality
+Q: "Incidents in January 2024"
+A:
+{
+  "metrics": ["incidents"],
+  "group_by": [],
+  "filters": [{"field":"month","op":"=","value":"2024-01-01"}],
+  "order_by": [{"field":"incidents","dir":"desc"}],
+  "limit": 0,
+  "compare": null,
+  "notes": "Single month uses equality filter",
+  "errors": []
+}
+
+Example 2: Quarter with exclusive upper bound
+Q: "Show me Q1 2024 crimes"
+A:
+{
+  "metrics": ["incidents"],
+  "group_by": [],
+  "filters": [{"field":"month","op":"between","value":["2024-01-01","2024-04-01"]}],
+  "order_by": [{"field":"incidents","dir":"desc"}],
+  "limit": 0,
+  "compare": null,
+  "notes": "Quarter range: Jan 1 to < Apr 1",
+  "errors": []
+}
+
+Example 3: Past 6 months
+Q: "Past 6 months incidents"
+A:
+{
+  "metrics": ["incidents"],
+  "group_by": [],
+  "filters": [{"field":"month","op":"between","value":["<CURRENT_MONTH_MINUS_5>","<CURRENT_MONTH_START>"]}],
+  "order_by": [{"field":"incidents","dir":"desc"}],
+  "limit": 0,
+  "compare": null,
+  "notes": "Past N months: subtract N-1 from current month start",
+  "errors": []
+}
+
+Example 4: YTD
+Q: "YTD incidents"
+A:
+{
+  "metrics": ["incidents"],
+  "group_by": [],
+  "filters": [{"field":"month","op":"between","value":["2025-01-01","<CURRENT_MONTH_START>"]}],
+  "order_by": [{"field":"incidents","dir":"desc"}],
+  "limit": 0,
+  "compare": null,
+  "notes": "YTD: Jan 1 of current year to current month start",
+  "errors": []
+}
+
+Example 5: LIKE pattern (firearm)
+Q: "Incidents involving firearms"
+A:
+{
+  "metrics": ["incidents"],
+  "group_by": [],
+  "filters": [{"field":"weapon","op":"like_any","value":["%firearm%"]}],
+  "order_by": [{"field":"incidents","dir":"desc"}],
+  "limit": 0,
+  "compare": null,
+  "notes": "LIKE filters preserve wildcards; no canonical mapping",
+  "errors": []
+}
+
+Example 6: MoM on single month
+Q: "January 2024 incidents with month-over-month change"
+A:
+{
+  "metrics": ["incidents"],
+  "group_by": [],
+  "filters": [{"field":"month","op":"=","value":"2024-01-01"}],
+  "order_by": [{"field":"incidents","dir":"desc"}],
+  "limit": 0,
+  "compare": {"type":"mom","periods":1},
+  "notes": "MoM on single month; planner will widen window internally",
+  "errors": []
+}
+
+Example 7: Trend defaults
+Q: "Show trend of incidents over time"
+A:
+{
+  "metrics": ["incidents"],
+  "group_by": ["month"],
+  "filters": [{"field":"month","op":"between","value":["<CURRENT_MONTH_MINUS_11>","<CURRENT_MONTH_START>"]}],
+  "order_by": [{"field":"month","dir":"asc"}],
+  "limit": 0,
+  "compare": null,
+  "notes": "Trend: group by month, asc order, default last 12 months",
+  "errors": []
+}
+
+Example 8: BAD PROSE → CORRECTED JSON
+Q: "Give me a breakdown of crime trends"
+WRONG (prose):
+"To analyze crime trends, I recommend grouping by month and filtering..."
+
+CORRECT (strict JSON):
+{
+  "metrics": ["incidents"],
+  "group_by": ["month"],
+  "filters": [{"field":"month","op":"between","value":["<CURRENT_MONTH_MINUS_11>","<CURRENT_MONTH_START>"]}],
+  "order_by": [{"field":"month","dir":"asc"}],
+  "limit": 0,
+  "compare": null,
+  "notes": "Trend analysis",
+  "errors": []
+}

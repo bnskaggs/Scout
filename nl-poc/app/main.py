@@ -171,6 +171,29 @@ def _apply_small_n(plan: Dict[str, Any], records: List[Dict[str, Any]]) -> List[
     return kept
 
 
+def _format_change_pct(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Format change_pct values as percentage strings with 2 decimals.
+
+    Keeps raw change_pct for calculations, adds change_pct_formatted for display.
+    """
+    if not records or "change_pct" not in records[0]:
+        return records
+
+    formatted_records = []
+    for row in records:
+        row_copy = row.copy()
+        change_pct = row_copy.get("change_pct")
+        if change_pct is not None:
+            # Convert to percentage (multiply by 100) and format with 2 decimals
+            pct_value = round(change_pct * 100, 2)
+            row_copy["change_pct_formatted"] = f"{pct_value:+.2f}%"
+        else:
+            row_copy["change_pct_formatted"] = "N/A"
+        formatted_records.append(row_copy)
+
+    return formatted_records
+
+
 @app.post("/ask")
 def ask(payload: AskRequest) -> Dict[str, Any]:
     question = payload.question.strip()
@@ -198,8 +221,15 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
 
     result = executor.query(sql)
     records = _apply_small_n(resolved_plan, result.records)
+    records = _format_change_pct(records)
     chart = viz.choose_chart(resolved_plan, records)
     narrative = viz.build_narrative(resolved_plan, records)
+
+    # Check for rowcap warning
+    warnings: list[str] = []
+    rowcap_warning = guardrails.check_rowcap_exceeded(result.truncated)
+    if rowcap_warning:
+        warnings.append(rowcap_warning)
 
     metric_defs = {metric: semantic.metrics[metric].sql_expression() for metric in resolved_plan.get("metrics", [])}
     response = {
@@ -211,6 +241,7 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
         "engine": intent_engine,
         "runtime_ms": result.runtime_ms,
         "rowcount": result.rowcount,
+        "warnings": warnings,
         "lineage": {
             "metric_defs": metric_defs,
             "time_window": resolved_plan.get("time_window_label", "All time"),

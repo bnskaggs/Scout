@@ -63,3 +63,8 @@ def test_like_any_filter_preserves_wildcards():
     assert resolved_plan["filters"] == [
         {"field": "weapon", "op": "like_any", "value": ["%firearm%"]},
     ]
+
+
+if __name__ == "__main__":
+    test_like_any_filter_preserves_wildcards()
+    print("PASS: test_like_any_filter_preserves_wildcards")
