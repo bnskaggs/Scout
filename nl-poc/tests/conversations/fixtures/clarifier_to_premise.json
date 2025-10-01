@@ -1,0 +1,143 @@
+{
+  "today": "2024-07-15",
+  "initial_nql": {
+    "nql_version": "0.1",
+    "intent": "aggregate",
+    "dataset": "la_crime",
+    "metrics": [
+      {"name": "incidents", "agg": "count", "alias": "incidents"}
+    ],
+    "time": {
+      "grain": "month",
+      "window": {
+        "type": "relative_months",
+        "start": null,
+        "end": "2024-07-01",
+        "exclusive_end": false,
+        "n": 12
+      },
+      "tz": "America/Chicago"
+    },
+    "filters": [
+      {"field": "month", "op": "between", "value": ["2023-07-01", "2024-07-01"], "type": "date", "notes": null}
+    ],
+    "dimensions": [],
+    "group_by": [],
+    "sort": [],
+    "limit": 100,
+    "flags": {
+      "trend": null,
+      "strict_json": true,
+      "require_grouping_for_trend": true,
+      "like_passthrough": true,
+      "single_month_equals": true,
+      "quarter_exclusive_end": true,
+      "rowcap_hint": 10000
+    },
+    "provenance": {
+      "utterance": null,
+      "retrieval_notes": [],
+      "confidence": null,
+      "critic_pass": []
+    }
+  },
+  "turns": [
+    {
+      "utterance": "same but by district",
+      "clarification": {
+        "question": "Which dimension should I break that out by?",
+        "answer": "premise",
+        "missing_slots": ["dimension"],
+        "suggested_answers": ["area", "crime_type", "premise", "vict_age"]
+      },
+      "expected": {
+        "nql_version": "0.1",
+        "intent": "aggregate",
+        "dataset": "la_crime",
+        "metrics": [
+          {"name": "incidents", "agg": "count", "alias": "incidents"}
+        ],
+        "time": {
+          "grain": "month",
+          "window": {
+            "type": "relative_months",
+            "start": null,
+            "end": "2024-07-01",
+            "exclusive_end": false,
+            "n": 12
+          },
+          "tz": "America/Chicago"
+        },
+        "dimensions": ["premise"],
+        "filters": [
+          {"field": "month", "op": "between", "value": ["2023-07-01", "2024-07-01"], "type": "date", "notes": null}
+        ],
+        "compare": null,
+        "group_by": [],
+        "sort": [],
+        "limit": 100,
+        "flags": {
+          "trend": null,
+          "strict_json": true,
+          "require_grouping_for_trend": true,
+          "like_passthrough": true,
+          "single_month_equals": true,
+          "quarter_exclusive_end": true,
+          "rowcap_hint": 10000
+        },
+        "provenance": {
+          "utterance": "same but by premise",
+          "retrieval_notes": [],
+          "confidence": null,
+          "critic_pass": []
+        }
+      }
+    },
+    {
+      "utterance": "now just bar",
+      "expected": {
+        "nql_version": "0.1",
+        "intent": "aggregate",
+        "dataset": "la_crime",
+        "metrics": [
+          {"name": "incidents", "agg": "count", "alias": "incidents"}
+        ],
+        "time": {
+          "grain": "month",
+          "window": {
+            "type": "relative_months",
+            "start": null,
+            "end": "2024-07-01",
+            "exclusive_end": false,
+            "n": 12
+          },
+          "tz": "America/Chicago"
+        },
+        "dimensions": ["premise"],
+        "filters": [
+          {"field": "month", "op": "between", "value": ["2023-07-01", "2024-07-01"], "type": "date", "notes": null},
+          {"field": "premise", "op": "=", "value": "Bar", "type": "category", "notes": null}
+        ],
+        "compare": null,
+        "group_by": [],
+        "sort": [],
+        "limit": 100,
+        "flags": {
+          "trend": null,
+          "strict_json": true,
+          "require_grouping_for_trend": true,
+          "like_passthrough": true,
+          "single_month_equals": true,
+          "quarter_exclusive_end": true,
+          "rowcap_hint": 10000
+        },
+        "provenance": {
+          "utterance": "now just bar",
+          "retrieval_notes": [],
+          "confidence": null,
+          "critic_pass": []
+        }
+      }
+    }
+  ]
+}

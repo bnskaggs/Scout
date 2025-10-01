@@ -13,7 +13,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import guardrails, sql_builder, viz
+from .conversation import (
+    ConversationStore,
+    assess_ambiguity,
+    apply_clarification_answer,
+    rewrite_followup,
+)
 from .executor import DuckDBExecutor
+from .nql import NQLValidationError, compile_payload
 from .planner import build_plan, get_last_intent_engine
 from .resolver import PlanResolutionError, PlanResolver, load_semantic_model
 
@@ -27,6 +34,17 @@ SEMANTIC_PATH = CONFIG_DIR / "semantic.yml"
 class AskRequest(BaseModel):
     question: str
     use_llm: Optional[bool] = None
+
+
+class ChatCompleteRequest(BaseModel):
+    session_id: str
+    utterance: str
+    use_llm: Optional[bool] = None
+
+
+class ChatClarifyRequest(BaseModel):
+    session_id: str
+    answer: str
 
 
 import logging, sys
@@ -55,6 +73,8 @@ _state: Dict[str, Any] = {
     "last_debug": None,
     "source_csv": None,
 }
+
+_conversations = ConversationStore()
 
 
 def _quote(identifier: str) -> str:
@@ -195,24 +215,18 @@ def _format_change_pct(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return formatted_records
 
 
-@app.post("/ask")
-def ask(payload: AskRequest) -> Dict[str, Any]:
-    question = payload.question.strip()
-    if not question:
-        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+def _execute_query(plan: Dict[str, Any], utterance: str, *, intent_engine: str) -> Dict[str, Any]:
     executor: DuckDBExecutor = _state["executor"]
     resolver: PlanResolver = _state["resolver"]
     semantic = _state["semantic"]
 
-    prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
-    prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
-
-    plan = build_plan(question, prefer_llm=prefer_llm)
-    intent_engine = get_last_intent_engine()
     try:
         resolved_plan = resolver.resolve(plan)
     except PlanResolutionError as exc:
-        raise HTTPException(status_code=400, detail={"message": str(exc), "suggestions": exc.suggestions}) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "suggestions": exc.suggestions},
+        ) from exc
 
     sql = sql_builder.build(resolved_plan, semantic)
     try:
@@ -227,7 +241,7 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
     narrative = viz.build_narrative(resolved_plan, records)
 
     plan_metadata = {
-        "utterance": question,
+        "utterance": utterance,
         "nql": plan.get("_nql"),
         "critic_pass": plan.get("_critic_pass", []),
         "engine": intent_engine,
@@ -236,13 +250,16 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
     }
     llm_logger.info("telemetry=%s", json.dumps(plan_metadata, default=str))
 
-    # Check for rowcap warning
-    warnings: list[str] = []
+    warnings: List[str] = []
     rowcap_warning = guardrails.check_rowcap_exceeded(result.truncated)
     if rowcap_warning:
         warnings.append(rowcap_warning)
 
-    metric_defs = {metric: semantic.metrics[metric].sql_expression() for metric in resolved_plan.get("metrics", [])}
+    metric_defs = {
+        metric: semantic.metrics[metric].sql_expression()
+        for metric in resolved_plan.get("metrics", [])
+    }
+
     response = {
         "answer": narrative,
         "table": records,
@@ -260,7 +277,9 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
             "source": _state.get("source_csv"),
             "runtime_ms": result.runtime_ms,
         },
+        "nql": plan.get("_nql"),
     }
+
     _state["last_debug"] = {
         "plan": resolved_plan,
         "sql": sql,
@@ -268,6 +287,190 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
         "rowcount": result.rowcount,
     }
     return response
+
+
+def _describe_time_window(window: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not window:
+        return None
+    window_type = window.get("type")
+    if window_type == "relative_months":
+        months = window.get("n") or 12
+        return f"Last {months} months"
+    if window_type == "quarter":
+        start = window.get("start")
+        end = window.get("end")
+        if start and end:
+            return f"Quarter starting {start}"
+        return "Last quarter"
+    if window_type == "single_month":
+        start = window.get("start")
+        if start:
+            return f"Month = {start}"
+        return "Single month"
+    if window_type == "ytd":
+        return "Year to date"
+    if window_type == "absolute":
+        start = window.get("start")
+        end = window.get("end")
+        if start and end:
+            return f"{start} to {end}"
+        if start:
+            return f"Since {start}"
+    return window_type.replace("_", " ").title() if window_type else None
+
+
+def _build_chips_from_nql(nql_payload: Optional[Dict[str, Any]]) -> Dict[str, List[str]]:
+    if not nql_payload:
+        return {"dimensions": [], "filters": [], "time": []}
+
+    dims: List[str] = []
+    for dim in nql_payload.get("dimensions", []):
+        if dim and dim not in dims and dim != "month":
+            dims.append(dim)
+    for group_dim in nql_payload.get("group_by", []):
+        if group_dim and group_dim not in dims and group_dim != "month":
+            dims.append(group_dim)
+
+    filter_chips: List[str] = []
+    for filt in nql_payload.get("filters", []):
+        field = filt.get("field")
+        if field == "month":
+            continue
+        op = filt.get("op")
+        value = filt.get("value")
+        if isinstance(value, list):
+            value_str = ", ".join(str(v) for v in value)
+        else:
+            value_str = str(value)
+        filter_chips.append(f"{field} {op} {value_str}")
+
+    time_window = _describe_time_window(nql_payload.get("time", {}).get("window"))
+    time_chips = [time_window] if time_window else []
+
+    return {
+        "dimensions": dims,
+        "filters": filter_chips,
+        "time": time_chips,
+    }
+
+
+@app.post("/ask")
+def ask(payload: AskRequest) -> Dict[str, Any]:
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+    executor: DuckDBExecutor = _state["executor"]
+    resolver: PlanResolver = _state["resolver"]
+    semantic = _state["semantic"]
+
+    prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
+    prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
+
+    plan = build_plan(question, prefer_llm=prefer_llm)
+    intent_engine = get_last_intent_engine()
+    return _execute_query(plan, question, intent_engine=intent_engine)
+
+
+def _build_conversation_response(response: Dict[str, Any]) -> Dict[str, Any]:
+    response.setdefault("chips", _build_chips_from_nql(response.get("nql")))
+    response.setdefault("status", "complete")
+    return response
+
+
+@app.post("/chat/complete")
+def chat_complete(payload: ChatCompleteRequest) -> Dict[str, Any]:
+    utterance = payload.utterance.strip()
+    if not utterance:
+        raise HTTPException(status_code=400, detail="Utterance cannot be empty.")
+
+    session = _conversations.get(payload.session_id)
+    if session.pending:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Pending clarification must be resolved first.",
+                "question": session.pending.question,
+                "missing_slots": session.pending.missing_slots,
+            },
+        )
+
+    prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
+    prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
+
+    if session.last_nql:
+        clarification = assess_ambiguity(session.last_nql, utterance)
+        if clarification.needs_clarification:
+            pending = _conversations.set_pending(
+                payload.session_id,
+                utterance,
+                clarification.question or "Can you clarify?",
+                clarification.missing_slots,
+                clarification.suggested_answers,
+                context=clarification.context,
+            )
+            chips = _build_chips_from_nql(session.last_nql)
+            return {
+                "status": "clarification_needed",
+                "question": pending.question,
+                "missing_slots": pending.missing_slots,
+                "suggested_answers": pending.suggested_answers,
+                "chips": chips,
+            }
+
+        try:
+            merged_nql = rewrite_followup(session.last_nql, utterance)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        try:
+            compiled = compile_payload(merged_nql)
+        except NQLValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        response = _execute_query(compiled.plan, utterance, intent_engine="conversation")
+        _conversations.update_last(
+            payload.session_id, compiled.nql.dict(), response["plan"]
+        )
+        return _build_conversation_response(response)
+
+    plan = build_plan(utterance, prefer_llm=prefer_llm)
+    intent_engine = get_last_intent_engine()
+    response = _execute_query(plan, utterance, intent_engine=intent_engine)
+    nql_payload = response.get("nql")
+    if nql_payload:
+        _conversations.update_last(payload.session_id, nql_payload, response["plan"])
+    else:
+        session.last_plan = response["plan"]
+    return _build_conversation_response(response)
+
+
+@app.post("/chat/clarify")
+def chat_clarify(payload: ChatClarifyRequest) -> Dict[str, Any]:
+    answer = payload.answer.strip()
+    if not answer:
+        raise HTTPException(status_code=400, detail="Answer cannot be empty.")
+
+    session = _conversations.get(payload.session_id)
+    pending = session.pending
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending clarification for session.")
+    if not session.last_nql:
+        raise HTTPException(status_code=400, detail="No prior NQL state for clarification.")
+
+    try:
+        merged_nql = apply_clarification_answer(session.last_nql, pending, answer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        compiled = compile_payload(merged_nql)
+    except NQLValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    utterance = f"{pending.utterance} ({answer})"
+    response = _execute_query(compiled.plan, utterance, intent_engine="conversation")
+    _conversations.update_last(payload.session_id, compiled.nql.dict(), response["plan"])
+    return _build_conversation_response(response)
 
 
 @app.get("/explain_last")
