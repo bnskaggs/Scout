@@ -1,0 +1,22 @@
+{
+  "nql_version": "0.1",
+  "intent": "detail",
+  "dataset": "la_crime",
+  "metrics": [
+    {"name": "incidents", "agg": "count", "alias": "incidents"}
+  ],
+  "filters": [
+    {"field": "weapon", "op": "like", "value": "%firearm%", "type": "text_raw"}
+  ],
+  "time": {
+    "grain": "month",
+    "window": {
+      "type": "relative_months",
+      "n": 6,
+      "end": "2024-09-01"
+    }
+  },
+  "group_by": [],
+  "sort": [],
+  "limit": 100
+}
