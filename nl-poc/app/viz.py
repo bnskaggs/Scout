@@ -70,7 +70,7 @@ def build_narrative(plan: Dict[str, object], records: List[Dict[str, object]]) -
 
     if compare and "change_pct" in top and top["change_pct"] is not None:
         direction = "up" if top["change_pct"] > 0 else "down"
-        pct_value = abs(round(top['change_pct'] * 100, 1))  # Convert to percentage and round
+        pct_value = abs(round(top['change_pct'], 1))  # SQL already multiplied by 100
         parts.append(f"({direction} {pct_value}% vs prior period)")
 
     return "; ".join(parts) + "."

@@ -184,8 +184,8 @@ def _format_change_pct(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         row_copy = row.copy()
         change_pct = row_copy.get("change_pct")
         if change_pct is not None:
-            # Convert to percentage (multiply by 100) and format with 2 decimals
-            pct_value = round(change_pct * 100, 2)
+            # SQL already multiplied by 100, just format with 2 decimals
+            pct_value = round(change_pct, 2)
             row_copy["change_pct_formatted"] = f"{pct_value:+.2f}%"
         else:
             row_copy["change_pct_formatted"] = "N/A"

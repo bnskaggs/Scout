@@ -61,7 +61,9 @@ def _next_month(dt: date) -> date:
 
 
 def current_date() -> date:
-    return datetime.now(_CHICAGO_TZ).date()
+    today = datetime.now(_CHICAGO_TZ).date()
+    print(f"[TIME_UTILS DEBUG] current_date() returning: {today}")
+    return today
 
 
 def current_month_start(today: Optional[date] = None) -> date:
@@ -277,16 +279,22 @@ def parse_year(text: str) -> Optional[TimeRange]:
 
 def extract_time_range(text: str, today: Optional[date] = None) -> Optional[TimeRange]:
     today = today or current_date()
+    print(f"[TIME_UTILS DEBUG] extract_time_range() using today: {today}, query: '{text}'")
     month_range = parse_month(text)
     if month_range:
+        print(f"[TIME_UTILS DEBUG] Matched month range: {month_range}")
         return month_range
     quarter_range = parse_quarter(text)
     if quarter_range:
+        print(f"[TIME_UTILS DEBUG] Matched quarter range: {quarter_range}")
         return quarter_range
     relative_range = parse_relative_range(text, today=today)
     if relative_range:
+        print(f"[TIME_UTILS DEBUG] Matched relative range: {relative_range}")
         return relative_range
-    return parse_year(text)
+    year_range = parse_year(text)
+    print(f"[TIME_UTILS DEBUG] Matched year range: {year_range}")
+    return year_range
 
 
 def describe_time_range(time_range: Optional[TimeRange]) -> str:
