@@ -1,0 +1,19 @@
+{
+  "nql_version": "0.1",
+  "intent": "aggregate",
+  "dataset": "la_crime",
+  "metrics": [
+    {"name": "incidents", "agg": "count", "alias": "incidents"}
+  ],
+  "dimensions": [],
+  "filters": [
+    {"field": "month", "op": "=", "value": "2023-06-01", "type": "date"}
+  ],
+  "time": {
+    "grain": "month",
+    "window": {"type": "single_month", "start": "2023-06-01"}
+  },
+  "group_by": [],
+  "sort": [],
+  "limit": 100
+}

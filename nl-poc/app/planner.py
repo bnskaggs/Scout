@@ -18,6 +18,7 @@ from .synonyms import (
     load_synonyms,
     weapon_patterns_from_value,
 )
+from .nql import NQLValidationError, compile_payload, is_enabled as nql_is_enabled
 from .time_utils import TimeRange, extract_time_range, trailing_year_range
 
 PROMPT_PATH = pathlib.Path(__file__).parent / "llm_prompt_intent.txt"
@@ -434,16 +435,31 @@ def build_plan_llm(question: str) -> Dict[str, object]:
 
 
     try:
-        plan = json.loads(raw)
-        assert isinstance(plan.get("metrics", []), list)
-        assert isinstance(plan.get("group_by", []), list)
-        assert isinstance(plan.get("filters", []), list)
+        payload = json.loads(raw)
     except Exception as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(f"LLM returned non-JSON or invalid plan: {raw[:200]}...") from exc
+        raise RuntimeError(f"LLM returned non-JSON payload: {raw[:200]}...") from exc
+
+    bundle = load_synonyms()
+    if nql_is_enabled() and isinstance(payload, dict) and payload.get("nql_version"):
+        try:
+            compiled = compile_payload(payload)
+        except NQLValidationError as exc:
+            raise RuntimeError(f"NQL validation failed: {exc}") from exc
+        plan = compiled.plan
+    else:
+        if not isinstance(payload, dict):
+            raise RuntimeError("LLM returned non-dict plan payload")
+        plan = payload
+        try:
+            assert isinstance(plan.get("metrics", []), list)
+            assert isinstance(plan.get("group_by", []), list)
+            assert isinstance(plan.get("filters", []), list)
+        except AssertionError as exc:  # pragma: no cover - defensive path
+            raise RuntimeError("LLM returned invalid planner payload") from exc
+        plan = _post_process_plan(question, plan, bundle)
 
     _LAST_ENGINE = "llm"
-    bundle = load_synonyms()
-    return _post_process_plan(question, plan, bundle)
+    return plan
 
 
 def build_plan(question: str, prefer_llm: bool = True) -> Dict[str, object]:

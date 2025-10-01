@@ -1,0 +1,19 @@
+{
+  "nql_version": "0.1",
+  "intent": "trend",
+  "dataset": "la_crime",
+  "metrics": [
+    {"name": "incidents", "agg": "count", "alias": "incidents"}
+  ],
+  "time": {
+    "grain": "month",
+    "window": {
+      "type": "relative_months",
+      "end": "2024-09-01"
+    }
+  },
+  "filters": [],
+  "group_by": [],
+  "sort": [],
+  "limit": 100
+}

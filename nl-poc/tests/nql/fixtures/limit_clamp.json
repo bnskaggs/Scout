@@ -1,0 +1,23 @@
+{
+  "nql_version": "0.1",
+  "intent": "detail",
+  "dataset": "la_crime",
+  "metrics": [
+    {"name": "incidents", "agg": "count", "alias": "incidents"}
+  ],
+  "time": {
+    "grain": "month",
+    "window": {
+      "type": "relative_months",
+      "n": 24,
+      "end": "2024-09-01"
+    }
+  },
+  "filters": [],
+  "group_by": [],
+  "sort": [],
+  "limit": 50000,
+  "flags": {
+    "rowcap_hint": 5000
+  }
+}

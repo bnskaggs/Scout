@@ -1,6 +1,7 @@
 """FastAPI entrypoint for the NL analytics proof-of-concept."""
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -224,6 +225,16 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
     records = _format_change_pct(records)
     chart = viz.choose_chart(resolved_plan, records)
     narrative = viz.build_narrative(resolved_plan, records)
+
+    plan_metadata = {
+        "utterance": question,
+        "nql": plan.get("_nql"),
+        "critic_pass": plan.get("_critic_pass", []),
+        "engine": intent_engine,
+        "runtime_ms": result.runtime_ms,
+        "rowcount": result.rowcount,
+    }
+    llm_logger.info("telemetry=%s", json.dumps(plan_metadata, default=str))
 
     # Check for rowcap warning
     warnings: list[str] = []

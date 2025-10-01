@@ -1,0 +1,25 @@
+{
+  "nql_version": "0.1",
+  "intent": "compare",
+  "dataset": "la_crime",
+  "metrics": [
+    {"name": "incidents", "agg": "count", "alias": "incidents"}
+  ],
+  "filters": [
+    {"field": "month", "op": "=", "value": "2024-08-01", "type": "date"}
+  ],
+  "time": {
+    "grain": "month",
+    "window": {
+      "type": "single_month",
+      "start": "2024-08-01"
+    }
+  },
+  "compare": {
+    "type": "mom",
+    "baseline": "previous_period"
+  },
+  "group_by": [],
+  "sort": [],
+  "limit": 100
+}
