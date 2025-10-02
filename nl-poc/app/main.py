@@ -20,8 +20,9 @@ from .conversation import (
     rewrite_followup,
 )
 from .executor import DuckDBExecutor
+from .llm_client import _load_env_once
 
-from .nql import NQLValidationError, compile_payload, is_enabled as nql_is_enabled
+from .nql import NQLValidationError, compile_payload, use_nql_enabled
 from .planner import build_plan, get_last_intent_engine, get_last_nql_status
 
 from .resolver import PlanResolutionError, PlanResolver, load_semantic_model
@@ -66,6 +67,8 @@ llm_logger.handlers.clear()        # avoid duplicate logs if reloading
 llm_logger.addHandler(handler)
 llm_logger.propagate = False       # don't let Uvicorn re-handle it
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Scout NL Analytics POC")
 app.add_middleware(
     CORSMiddleware,
@@ -94,6 +97,28 @@ def _slug_reason(message: str) -> str:
     return slug or "error"
 
 
+def _env_truthy(value: Optional[str], *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _gather_nql_debug_snapshot() -> Dict[str, Any]:
+    _load_env_once()
+    use_nql_raw = os.getenv("USE_NQL")
+    provider = (os.getenv("LLM_PROVIDER") or "").strip()
+    model = (os.getenv("LLM_MODEL") or "").strip()
+    snapshot = {
+        "use_nql": use_nql_enabled(),
+        "use_nql_raw": use_nql_raw,
+        "llm_provider": provider,
+        "model": model,
+        "api_key_present": bool(os.getenv("LLM_API_KEY")),
+        "retriever_enabled": _env_truthy(os.getenv("RETRIEVER_ENABLED")),
+    }
+    return snapshot
+
+
 def _resolve_session_id(body_value: Optional[str], header_value: Optional[str]) -> str:
     session_id = header_value or body_value
     if not session_id:
@@ -111,6 +136,13 @@ def _build_nql_failure(stage: str, error: Exception) -> Dict[str, Any]:
         "detail": message,
         "fallback": "legacy",
     }
+
+
+def _build_gate_status(reason: str) -> Dict[str, Any]:
+    status: Dict[str, Any] = {"attempted": False, "stage": "gate", "reason": reason}
+    if reason != "clarifier_pending":
+        status["fallback"] = "legacy"
+    return status
 
 
 def _normalise(name: str) -> str:
@@ -175,7 +207,16 @@ def startup_event() -> None:
     _state["executor"] = executor
     _state["semantic"] = semantic
     _state["resolver"] = PlanResolver(semantic, executor)
-    _state["use_nql"] = nql_is_enabled()
+    snapshot = _gather_nql_debug_snapshot()
+    logger.info(
+        "nql_gate_config use_nql_raw=%s use_nql=%s llm_provider=%s llm_model=%s api_key_present=%s retriever_enabled=%s",
+        snapshot.get("use_nql_raw"),
+        snapshot["use_nql"],
+        snapshot["llm_provider"],
+        snapshot["model"],
+        snapshot["api_key_present"],
+        snapshot["retriever_enabled"],
+    )
 
 
 @app.on_event("shutdown")
@@ -188,6 +229,18 @@ def shutdown_event() -> None:
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/chat/debug-nql")
+def chat_debug_nql() -> Dict[str, Any]:
+    snapshot = _gather_nql_debug_snapshot()
+    return {
+        "use_nql": snapshot["use_nql"],
+        "llm_provider": snapshot["llm_provider"],
+        "model": snapshot["model"],
+        "api_key_present": snapshot["api_key_present"],
+        "retriever_enabled": snapshot["retriever_enabled"],
+    }
 
 
 def _summarise_filters(filters: List[Dict[str, Any]]) -> List[str]:
@@ -424,37 +477,42 @@ def chat_complete(
     session = _conversations.get(session_id)
 
     if session.pending:
+        gate_status = _build_gate_status("clarifier_pending")
         raise HTTPException(
             status_code=409,
             detail={
                 "message": "Pending clarification must be resolved first.",
                 "question": session.pending.question,
                 "missing_slots": session.pending.missing_slots,
+                "nql_status": gate_status,
             },
         )
 
     prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
     prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
 
-    use_nql = bool(_state.get("use_nql", True))
-    disabled_status = None
-    if not use_nql:
-        disabled_status = {
-            "attempted": False,
-            "valid": False,
-            "reason": "nql_disabled",
-            "detail": "NQL pipeline disabled",
-            "fallback": "legacy",
-        }
+    snapshot = _gather_nql_debug_snapshot()
+    use_nql = snapshot["use_nql"]
+    llm_config_present = bool(
+        snapshot["llm_provider"] and snapshot["model"] and snapshot["api_key_present"]
+    )
+    feature_disabled = _env_truthy(os.getenv("NQL_FEATURE_DISABLED"))
+
+    gate_status: Optional[Dict[str, Any]] = None
+    if feature_disabled:
+        gate_status = _build_gate_status("feature_disabled")
+    elif not use_nql:
+        gate_status = _build_gate_status("use_nql_flag_false")
+    elif not llm_config_present:
+        gate_status = _build_gate_status("missing_llm_config")
 
     nql_failure_status: Optional[Dict[str, Any]] = None
 
-    if use_nql and session.last_nql:
+    if gate_status is None and session.last_nql:
         clarification = assess_ambiguity(session.last_nql, utterance)
         if clarification.needs_clarification:
             pending = _conversations.set_pending(
                 session_id,
-
                 utterance,
                 clarification.question or "Can you clarify?",
                 clarification.missing_slots,
@@ -462,26 +520,21 @@ def chat_complete(
                 context=clarification.context,
             )
             chips = _build_chips_from_nql(session.last_nql)
-
+            status = _build_gate_status("clarifier_pending")
             response_data = {
-
                 "status": "clarification_needed",
                 "question": pending.question,
                 "missing_slots": pending.missing_slots,
                 "suggested_answers": pending.suggested_answers,
                 "chips": chips,
-
                 "engine": "nql",
+                "nql_status": status,
             }
-            if disabled_status:
-                response_data["nql_status"] = disabled_status
             return response_data
-
 
         try:
             merged_nql = rewrite_followup(session.last_nql, utterance)
         except ValueError as exc:
-
             nql_failure_status = _build_nql_failure("generator", exc)
         else:
             try:
@@ -498,19 +551,23 @@ def chat_complete(
                 return _build_conversation_response(response)
 
     plan = build_plan(utterance, prefer_llm=prefer_llm)
-    planner_status = get_last_nql_status()
-    engine = "nql" if plan.get("_nql") else "legacy"
-    response = _execute_query(plan, utterance, intent_engine=engine)
-    response["engine"] = engine
+    planner_status = get_last_nql_status() if gate_status is None else None
+    execution_engine = "legacy" if gate_status else ("nql" if plan.get("_nql") else "legacy")
+    response = _execute_query(plan, utterance, intent_engine=execution_engine)
+    response["engine"] = execution_engine
     nql_payload = response.get("nql")
-    if nql_payload and engine == "nql":
+
+    if gate_status:
+        response["nql_status"] = gate_status
+        session.last_plan = response["plan"]
+    elif nql_payload and execution_engine == "nql":
         response["nql_status"] = planner_status or {"attempted": True, "valid": True}
         _conversations.update_last(session_id, nql_payload, response["plan"])
     else:
-        status = nql_failure_status or planner_status or disabled_status or {"attempted": False}
+        status = nql_failure_status or planner_status or {"attempted": False}
         response["nql_status"] = status
-
         session.last_plan = response["plan"]
+
     return _build_conversation_response(response)
 
 
