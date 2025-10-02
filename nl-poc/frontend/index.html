@@ -22,6 +22,8 @@
       .input-row {
         display: flex;
         gap: 0.5rem;
+        align-items: center;
+        flex-wrap: wrap;
       }
       input[type="text"] {
         flex: 1;
@@ -42,6 +44,36 @@
       button:disabled {
         background: #9ca3af;
         cursor: not-allowed;
+      }
+      .context-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: #e2e8f0;
+        color: #1f2937;
+        border-radius: 999px;
+        padding: 0.25rem 0.6rem;
+        font-size: 0.85rem;
+        font-weight: 500;
+      }
+      .context-toggle span {
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.04em;
+        color: #475569;
+      }
+      .context-toggle button {
+        background: #2563eb;
+        color: #fff;
+        border: none;
+        border-radius: 999px;
+        padding: 0.15rem 0.75rem;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      .context-toggle button.off {
+        background: #94a3b8;
       }
       .card {
         background: #fff;
@@ -349,6 +381,10 @@
         <div class="input-row">
           <input id="question" type="text" placeholder="Ask about crime incidents..." />
           <button id="ask-btn">Ask</button>
+          <div class="context-toggle" role="group" aria-label="Context memory">
+            <span>Context</span>
+            <button id="context-toggle" type="button">On</button>
+          </div>
         </div>
         <div id="error-panel" class="error-panel">
           <h3>Error</h3>
@@ -442,6 +478,7 @@
       const clarificationPanel = document.getElementById('clarification-panel');
       const clarificationQuestionEl = document.getElementById('clarification-question');
       const clarificationOptions = document.getElementById('clarification-options');
+      const contextToggleBtn = document.getElementById('context-toggle');
 
 
       const SESSION_STORAGE_KEY = 'scout-session-id';
@@ -480,8 +517,25 @@
       const sessionId = getSessionId();
 
       let pendingClarification = null;
+      let isContextEnabled = true;
 
       const apiBase = window.location.port === '3000' ? 'http://127.0.0.1:8000' : window.location.origin;
+
+      function renderContextToggle() {
+        const label = isContextEnabled ? 'Turn context off' : 'Turn context on';
+        contextToggleBtn.textContent = isContextEnabled ? 'On' : 'Off';
+        contextToggleBtn.classList.toggle('off', !isContextEnabled);
+        contextToggleBtn.setAttribute('aria-pressed', String(isContextEnabled));
+        contextToggleBtn.setAttribute('aria-label', label);
+        contextToggleBtn.title = label;
+      }
+
+      contextToggleBtn.addEventListener('click', () => {
+        isContextEnabled = !isContextEnabled;
+        renderContextToggle();
+      });
+
+      renderContextToggle();
 
       askBtn.addEventListener('click', () => submitQuestion(questionInput.value));
       questionInput.addEventListener('keydown', event => {
@@ -531,7 +585,7 @@
             'X-Session-Id': sessionId
           },
 
-          body: JSON.stringify({ session_id: sessionId, utterance })
+          body: JSON.stringify({ session_id: sessionId, utterance, context_enabled: isContextEnabled })
         });
         if (!response.ok) {
           throw await buildError(response);

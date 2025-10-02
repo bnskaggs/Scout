@@ -47,6 +47,7 @@ class ChatCompleteRequest(BaseModel):
 
     utterance: str
     use_llm: Optional[bool] = None
+    context_enabled: Optional[bool] = None
 
 
 class ChatClarifyRequest(BaseModel):
@@ -498,6 +499,7 @@ def chat_complete(
 
     prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
     prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
+    context_enabled = True if payload.context_enabled is None else bool(payload.context_enabled)
 
     snapshot = _gather_nql_debug_snapshot()
     use_nql = snapshot["use_nql"]
@@ -520,31 +522,36 @@ def chat_complete(
     is_followup = session.last_nql and not _is_self_contained_query(utterance)
 
     if gate_status is None and is_followup:
-        clarification = assess_ambiguity(session.last_nql, utterance)
-        if clarification.needs_clarification:
-            pending = _conversations.set_pending(
-                session_id,
-                utterance,
-                clarification.question or "Can you clarify?",
-                clarification.missing_slots,
-                clarification.suggested_answers,
-                context=clarification.context,
-            )
-            chips = _build_chips_from_nql(session.last_nql)
-            status = _build_gate_status("clarifier_pending")
-            response_data = {
-                "status": "clarification_needed",
-                "question": pending.question,
-                "missing_slots": pending.missing_slots,
-                "suggested_answers": pending.suggested_answers,
-                "chips": chips,
-                "engine": "nql",
-                "nql_status": status,
-            }
-            return response_data
+        if context_enabled:
+            clarification = assess_ambiguity(session.last_nql, utterance)
+            if clarification.needs_clarification:
+                pending = _conversations.set_pending(
+                    session_id,
+                    utterance,
+                    clarification.question or "Can you clarify?",
+                    clarification.missing_slots,
+                    clarification.suggested_answers,
+                    context=clarification.context,
+                )
+                chips = _build_chips_from_nql(session.last_nql)
+                status = _build_gate_status("clarifier_pending")
+                response_data = {
+                    "status": "clarification_needed",
+                    "question": pending.question,
+                    "missing_slots": pending.missing_slots,
+                    "suggested_answers": pending.suggested_answers,
+                    "chips": chips,
+                    "engine": "nql",
+                    "nql_status": status,
+                }
+                return response_data
 
         try:
-            merged_nql = rewrite_followup(session.last_nql, utterance)
+            merged_nql = rewrite_followup(
+                session.last_nql,
+                utterance,
+                force_fresh=not context_enabled,
+            )
         except ValueError as exc:
             nql_failure_status = _build_nql_failure("generator", exc)
         else:

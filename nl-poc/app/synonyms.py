@@ -78,27 +78,26 @@ def load_synonyms() -> SynonymBundle:
 SHARE_TOKENS = {"share", "percentage", "% of", "percent of"}
 
 
-WEAPON_SYNONYM_TOKENS = {
-    "firearm",
-    "firearms",
-    "gun",
-    "guns",
-    "handgun",
-    "handguns",
-    "hand gun",
-    "rifle",
-    "rifles",
-    "shotgun",
-    "shotguns",
+_WEAPON_PATTERN_MAP = {
+    "firearm": ["%firearm%", "%gun%", "%hand gun%", "%rifle%", "%shotgun%"],
+    "firearms": ["%firearm%", "%gun%", "%hand gun%", "%rifle%", "%shotgun%"],
+    "gun": ["%gun%", "%firearm%", "%hand gun%"],
+    "guns": ["%gun%", "%firearm%", "%hand gun%"],
+    "handgun": ["%hand gun%", "%gun%", "%firearm%"],
+    "handguns": ["%hand gun%", "%gun%", "%firearm%"],
+    "hand gun": ["%hand gun%", "%gun%", "%firearm%"],
+    "rifle": ["%rifle%"],
+    "rifles": ["%rifle%"],
+    "shotgun": ["%shotgun%"],
+    "shotguns": ["%shotgun%"],
+    "knife": ["%knife%", "%stab%"],
+    "knives": ["%knife%", "%stab%"],
+    "stabbing": ["%stab%", "%knife%"],
+    "stabbings": ["%stab%", "%knife%"],
+    "stabbed": ["%stab%", "%knife%"],
+    "stab": ["%stab%", "%knife%"],
+    "knifing": ["%knife%", "%stab%"],
 }
-
-WEAPON_LIKE_PATTERNS = [
-    "%firearm%",
-    "%gun%",
-    "%hand gun%",
-    "%rifle%",
-    "%shotgun%",
-]
 
 
 def find_dimension(keyword: str, bundle: SynonymBundle) -> str | None:
@@ -123,17 +122,28 @@ def detect_compare(text: str, bundle: SynonymBundle) -> str | None:
     return None
 
 
-def detect_weapon_patterns(text: str) -> Optional[List[str]]:
-    text_lower = text.lower()
-    for token in WEAPON_SYNONYM_TOKENS:
+def _collect_weapon_patterns(text_lower: str) -> List[str]:
+    collected: List[str] = []
+    for token, patterns in _WEAPON_PATTERN_MAP.items():
         if token in text_lower:
-            return list(WEAPON_LIKE_PATTERNS)
-    return None
+            collected.extend(patterns)
+    # Preserve order while removing duplicates
+    deduped: List[str] = []
+    seen = set()
+    for pattern in collected:
+        key = pattern.lower()
+        if key in seen:
+            continue
+        deduped.append(pattern)
+        seen.add(key)
+    return deduped
+
+
+def detect_weapon_patterns(text: str) -> Optional[List[str]]:
+    patterns = _collect_weapon_patterns(text.lower())
+    return patterns or None
 
 
 def weapon_patterns_from_value(value: str) -> Optional[List[str]]:
-    value_lower = value.lower()
-    for token in WEAPON_SYNONYM_TOKENS:
-        if token in value_lower:
-            return list(WEAPON_LIKE_PATTERNS)
-    return None
+    patterns = _collect_weapon_patterns(value.lower())
+    return patterns or None
