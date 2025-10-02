@@ -41,32 +41,52 @@ COMPARE FLAGS
 TIME NORMALIZATION
 - Operate at month grain, use first day of month: YYYY-MM-01.
 - Examples:
-  * “Q2 2024” → ["2024-04-01","2024-06-01"]
-  * “YTD 2025” → ["2025-01-01","<CURRENT_MONTH_START>"]
-  * “last month” → ["<PREV_MONTH_START>","<PREV_MONTH_START>"]
-  * “last 3 months” → ["<CURRENT_MONTH_MINUS_2>","<CURRENT_MONTH_START>"]
-- If no time mentioned, omit the month filter.
+  * "Q2 2024" → ["2024-04-01","2024-06-01"]
+  * "YTD 2025" → ["2025-01-01","<CURRENT_MONTH_START>"]
+  * "last month" → ["<PREV_MONTH_START>","<PREV_MONTH_START>"]
+  * "last 3 months" → ["<CURRENT_MONTH_MINUS_2>","<CURRENT_MONTH_START>"]
+  * "last 12 months" → ["<CURRENT_MONTH_MINUS_11>","<CURRENT_MONTH_START>"]
+  * "last year" (calendar year) → ["<LAST_YEAR_START>","<LAST_YEAR_END>"]
+- If no time mentioned, default to last 12 months for aggregate queries.
 
-OUTPUT JSON SCHEMA
+OUTPUT JSON SCHEMA (NQL v0.1)
 {
-  "metrics": ["incidents"],
-  "group_by": ["<dimension>", "..."],
+  "nql_version": "0.1",
+  "intent": "aggregate"|"trend"|"compare"|"rank"|"distribution",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": ["<dimension>"],
   "filters": [
-    {"field":"<dimension>","op":"="|"in"|"between","value":"<value or [v1,v2]>"}
+    {"field":"<dimension>","op":"="|"in"|"between"|"like_any","value":"<value>","type":"text"|"date"|"number"|"category"}
   ],
-  "order_by": [{"field":"<metric or dimension>","dir":"asc"|"desc"}],
+  "time": {
+    "grain": "month",
+    "window": {"type":"single_month"|"quarter"|"relative_months"|"ytd"|"absolute","start":"YYYY-MM-01","end":"YYYY-MM-01","n":<int>}
+  },
+  "group_by": ["<dimension>"],
+  "sort": [{"by":"<field>","dir":"asc"|"desc"}],
   "limit": <integer>,
-  "compare": {"type":"mom"|"yoy","periods": <int>} | null,
-  "notes": "<brief assumptions if any>",
-  "errors": []
+  "compare": {"type":"mom"|"yoy","baseline":"previous_period","internal_window":{"expand_prior":true|false}},
+  "flags": {"trend":true|false|null},
+  "provenance": {"utterance":"<original question>","critic_pass":[]}
 }
 
 RULES
+- ALWAYS include "nql_version": "0.1" in the output.
 - Use only allowed metrics/dimensions.
-- Default limit=10 when the question implies "top/rank" and no limit given.
-- For ranges use {"field":"month","op":"between","value":["YYYY-MM-01","YYYY-MM-01"]}.
-- DO NOT correct typos; put suggestions in `errors`:
-  "Unknown area 'Hoolywood'. Try: Hollywood, West LA, Central."
+- Default limit=100 unless question implies "top/rank" (then 10).
+- Intent types:
+  * "aggregate": Single total value across time window
+  * "trend": Breakdown BY MONTH over time (group_by includes "month")
+  * "compare": MoM/YoY comparison
+  * "rank": Top/bottom by dimension (group_by does NOT include "month")
+  * "distribution": Breakdown by dimension (group_by does NOT include "month")
+- CRITICAL: "by area" / "by crime_type" = intent "rank", NOT "trend"
+- CRITICAL: "trend" / "over time" / "monthly" = intent "trend" (group_by: ["month"])
+- For month filters, use the "time.window" structure, NOT filters array.
+- Non-month filters go in the "filters" array with proper "type" field.
+- Set "dimensions" to list of dimensions the user wants to see.
+- Set "group_by" to dimensions to group by (include "month" ONLY for trend intent).
 - RETURN ONLY JSON. NO SQL, NO PROSE.
 
 WORKED EXAMPLES
@@ -75,113 +95,157 @@ Example 1: Single month equality
 Q: "Incidents in January 2024"
 A:
 {
-  "metrics": ["incidents"],
+  "nql_version": "0.1",
+  "intent": "aggregate",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": [],
+  "filters": [],
+  "time": {"grain":"month","window":{"type":"single_month","start":"2024-01-01"}},
   "group_by": [],
-  "filters": [{"field":"month","op":"=","value":"2024-01-01"}],
-  "order_by": [{"field":"incidents","dir":"desc"}],
-  "limit": 0,
-  "compare": null,
-  "notes": "Single month uses equality filter",
-  "errors": []
+  "sort": [],
+  "limit": 100,
+  "provenance": {"utterance":"Incidents in January 2024"}
 }
 
 Example 2: Quarter with exclusive upper bound
 Q: "Show me Q1 2024 crimes"
 A:
 {
-  "metrics": ["incidents"],
+  "nql_version": "0.1",
+  "intent": "aggregate",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": [],
+  "filters": [],
+  "time": {"grain":"month","window":{"type":"quarter","start":"2024-01-01","end":"2024-04-01","exclusive_end":true}},
   "group_by": [],
-  "filters": [{"field":"month","op":"between","value":["2024-01-01","2024-04-01"]}],
-  "order_by": [{"field":"incidents","dir":"desc"}],
-  "limit": 0,
-  "compare": null,
-  "notes": "Quarter range: Jan 1 to < Apr 1",
-  "errors": []
+  "sort": [],
+  "limit": 100,
+  "provenance": {"utterance":"Show me Q1 2024 crimes"}
 }
 
 Example 3: Past 6 months
 Q: "Past 6 months incidents"
 A:
 {
-  "metrics": ["incidents"],
+  "nql_version": "0.1",
+  "intent": "aggregate",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": [],
+  "filters": [],
+  "time": {"grain":"month","window":{"type":"relative_months","n":6}},
   "group_by": [],
-  "filters": [{"field":"month","op":"between","value":["<CURRENT_MONTH_MINUS_5>","<CURRENT_MONTH_START>"]}],
-  "order_by": [{"field":"incidents","dir":"desc"}],
-  "limit": 0,
-  "compare": null,
-  "notes": "Past N months: subtract N-1 from current month start",
-  "errors": []
+  "sort": [],
+  "limit": 100,
+  "provenance": {"utterance":"Past 6 months incidents"}
 }
 
 Example 4: YTD
 Q: "YTD incidents"
 A:
 {
-  "metrics": ["incidents"],
+  "nql_version": "0.1",
+  "intent": "aggregate",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": [],
+  "filters": [],
+  "time": {"grain":"month","window":{"type":"ytd"}},
   "group_by": [],
-  "filters": [{"field":"month","op":"between","value":["2025-01-01","<CURRENT_MONTH_START>"]}],
-  "order_by": [{"field":"incidents","dir":"desc"}],
-  "limit": 0,
-  "compare": null,
-  "notes": "YTD: Jan 1 of current year to current month start",
-  "errors": []
+  "sort": [],
+  "limit": 100,
+  "provenance": {"utterance":"YTD incidents"}
 }
 
 Example 5: LIKE pattern (firearm)
 Q: "Incidents involving firearms"
 A:
 {
-  "metrics": ["incidents"],
+  "nql_version": "0.1",
+  "intent": "aggregate",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": [],
+  "filters": [{"field":"weapon","op":"like_any","value":["%firearm%"],"type":"text"}],
+  "time": {"grain":"month","window":{"type":"relative_months","n":12}},
   "group_by": [],
-  "filters": [{"field":"weapon","op":"like_any","value":["%firearm%"]}],
-  "order_by": [{"field":"incidents","dir":"desc"}],
-  "limit": 0,
-  "compare": null,
-  "notes": "LIKE filters preserve wildcards; no canonical mapping",
-  "errors": []
+  "sort": [],
+  "limit": 100,
+  "provenance": {"utterance":"Incidents involving firearms"}
 }
 
 Example 6: MoM on single month
 Q: "January 2024 incidents with month-over-month change"
 A:
 {
-  "metrics": ["incidents"],
+  "nql_version": "0.1",
+  "intent": "compare",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": [],
+  "filters": [],
+  "time": {"grain":"month","window":{"type":"single_month","start":"2024-01-01"}},
   "group_by": [],
-  "filters": [{"field":"month","op":"=","value":"2024-01-01"}],
-  "order_by": [{"field":"incidents","dir":"desc"}],
-  "limit": 0,
-  "compare": {"type":"mom","periods":1},
-  "notes": "MoM on single month; planner will widen window internally",
-  "errors": []
+  "sort": [],
+  "limit": 100,
+  "compare": {"type":"mom","baseline":"previous_period","internal_window":{"expand_prior":true}},
+  "provenance": {"utterance":"January 2024 incidents with month-over-month change"}
 }
 
 Example 7: Trend defaults
 Q: "Show trend of incidents over time"
 A:
 {
-  "metrics": ["incidents"],
+  "nql_version": "0.1",
+  "intent": "trend",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": ["month"],
+  "filters": [],
+  "time": {"grain":"month","window":{"type":"relative_months","n":12}},
   "group_by": ["month"],
-  "filters": [{"field":"month","op":"between","value":["<CURRENT_MONTH_MINUS_11>","<CURRENT_MONTH_START>"]}],
-  "order_by": [{"field":"month","dir":"asc"}],
-  "limit": 0,
-  "compare": null,
-  "notes": "Trend: group by month, asc order, default last 12 months",
-  "errors": []
+  "sort": [{"by":"month","dir":"asc"}],
+  "limit": 100,
+  "flags": {"trend":true},
+  "provenance": {"utterance":"Show trend of incidents over time"}
 }
 
-Example 8: BAD PROSE → CORRECTED JSON
+Example 8: Aggregate by dimension (NOT a trend)
+Q: "Incidents by area last year"
+A:
+{
+  "nql_version": "0.1",
+  "intent": "rank",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": ["area"],
+  "filters": [],
+  "time": {"grain":"month","window":{"type":"absolute","start":"<LAST_YEAR_START>","end":"<LAST_YEAR_END>"}},
+  "group_by": ["area"],
+  "sort": [{"by":"incidents","dir":"desc"}],
+  "limit": 100,
+  "provenance": {"utterance":"Incidents by area last year"}
+}
+
+Example 9: BAD PROSE → CORRECTED JSON
 Q: "Give me a breakdown of crime trends"
 WRONG (prose):
 "To analyze crime trends, I recommend grouping by month and filtering..."
 
 CORRECT (strict JSON):
 {
-  "metrics": ["incidents"],
+  "nql_version": "0.1",
+  "intent": "trend",
+  "dataset": "la_crime",
+  "metrics": [{"name":"incidents","agg":"count","alias":"incidents"}],
+  "dimensions": ["month"],
+  "filters": [],
+  "time": {"grain":"month","window":{"type":"relative_months","n":12}},
   "group_by": ["month"],
-  "filters": [{"field":"month","op":"between","value":["<CURRENT_MONTH_MINUS_11>","<CURRENT_MONTH_START>"]}],
-  "order_by": [{"field":"month","dir":"asc"}],
-  "limit": 0,
-  "compare": null,
-  "notes": "Trend analysis",
-  "errors": []
+  "sort": [{"by":"month","dir":"asc"}],
+  "limit": 100,
+  "flags": {"trend":true},
+  "provenance": {"utterance":"Give me a breakdown of crime trends"}
 }

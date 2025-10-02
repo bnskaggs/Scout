@@ -94,14 +94,25 @@ def fill_time_tokens(prompt: str, today=None) -> str:
     if relativedelta is not None:
         prev = month_start(cur - relativedelta(months=1))
         cur_m2 = month_start(cur - relativedelta(months=2))
+        cur_m11 = month_start(cur - relativedelta(months=11))
     else:  # pragma: no cover - fallback when python-dateutil is unavailable
         prev = _shift_months(cur, -1)
         cur_m2 = _shift_months(cur, -2)
+        cur_m11 = _shift_months(cur, -11)
+
+    # "last year" = Jan 1 to Jan 1 (next year) for previous calendar year
+    # SQL uses exclusive upper: month >= '2024-01-01' AND month < '2025-01-01'
+    # This gives Jan through Dec of last year (12 months)
+    last_year_start = date(today.year - 1, 1, 1)
+    last_year_end = date(today.year, 1, 1)
 
     return (
         prompt.replace("<CURRENT_MONTH_START>", cur.isoformat())
         .replace("<PREV_MONTH_START>", prev.isoformat())
         .replace("<CURRENT_MONTH_MINUS_2>", cur_m2.isoformat())
+        .replace("<CURRENT_MONTH_MINUS_11>", cur_m11.isoformat())
+        .replace("<LAST_YEAR_START>", last_year_start.isoformat())
+        .replace("<LAST_YEAR_END>", last_year_end.isoformat())
     )
 
 

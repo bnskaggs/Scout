@@ -57,6 +57,27 @@ def _resolve_dimension(candidate: str) -> Optional[str]:
     return None
 
 
+def _is_self_contained_query(utterance: str) -> bool:
+    """Check if utterance is a complete query (not a modification of previous)."""
+    lowered = utterance.lower()
+
+    # Check for metric mentions
+    metric_keywords = ["incident", "crime", "case", "event", "report", "count", "total", "number"]
+    has_metric = any(keyword in lowered for keyword in metric_keywords)
+
+    # Check for time references
+    time_keywords = [
+        "last year", "this year", "ytd", "year to date",
+        "last month", "this month", "last quarter",
+        "last 6 months", "last 12 months", "past 6 months",
+        "2024", "2025", "q1", "q2", "q3", "q4"
+    ]
+    has_time = any(keyword in lowered for keyword in time_keywords)
+
+    # Self-contained if it has both metric and time (not just a modification)
+    return has_metric and has_time
+
+
 def _extract_dimension_candidate(utterance: str) -> Optional[str]:
     """Pull a possible dimension target from the utterance."""
 
@@ -195,9 +216,11 @@ def rewrite_followup(
     if candidate_dimension:
         resolved = _resolve_dimension(candidate_dimension)
         if resolved:
+            # "same but by X" means REPLACE the dimension, not add to it
             working.dimensions = [resolved]
-            # Remove duplicate entry if already present in group_by
-            working.group_by = [dim for dim in working.group_by if dim != resolved]
+            # REPLACE group_by with the new dimension (keep month if it was there for trends)
+            has_month = "month" in working.group_by
+            working.group_by = ["month", resolved] if has_month else [resolved]
 
     # Detect filter removals like "filter out Central"
     remove_match = re.search(
@@ -206,13 +229,26 @@ def rewrite_followup(
     if remove_match:
         value = remove_match.group(1).strip().strip(". ")
         value_norm = _normalise_text(value)
+        filter_modified = False
+
+        # First, try to modify an existing filter
         for filt in working.filters:
             if isinstance(filt.value, str) and _normalise_text(str(filt.value)) == value_norm:
                 if filt.op == "=":
                     filt.op = "!="
                 else:
                     working.filters = [f for f in working.filters if f is not filt]
+                filter_modified = True
                 break
+
+        # If no existing filter was modified, add a new exclusion filter
+        if not filter_modified:
+            # Infer the field from the current dimension or default to area
+            field = working.dimensions[0] if working.dimensions else "area"
+            filt_type = _DIMENSION_TYPES.get(field, "category")
+            working.filters.append(
+                Filter(field=field, op="!=", value=value.title(), type=filt_type)
+            )
 
     # Detect filter additions like "only Central" or "just show Hollywood"
     add_match = re.search(r"(?:only|just)\s+([\w\s'&/-]+)", lowered)
@@ -409,5 +445,6 @@ __all__ = [
     "assess_ambiguity",
     "apply_clarification_answer",
     "rewrite_followup",
+    "_is_self_contained_query",
 ]
 

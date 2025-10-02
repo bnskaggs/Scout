@@ -294,6 +294,50 @@
         text-align: center;
         padding: 1rem;
       }
+
+      /* Summarizer styles */
+      #explanation-container {
+        margin: 20px 0;
+        padding: 16px;
+        background: #f8f9fa;
+        border-left: 4px solid #4a90e2;
+        border-radius: 4px;
+        display: none;
+      }
+      .explanation-text {
+        font-size: 15px;
+        line-height: 1.6;
+        color: #333;
+      }
+      #followups-container {
+        margin: 20px 0;
+        display: none;
+      }
+      .followups-label {
+        font-size: 14px;
+        font-weight: 500;
+        color: #666;
+        margin-bottom: 10px;
+      }
+      .followups-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .followup-pill {
+        padding: 8px 16px;
+        background: white;
+        border: 1px solid #ddd;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: all 0.2s;
+      }
+      .followup-pill:hover {
+        background: #4a90e2;
+        color: white;
+        border-color: #4a90e2;
+      }
     </style>
   </head>
   <body>
@@ -326,6 +370,15 @@
 
         <!-- Filter chips -->
         <div id="filter-chips" class="filter-chips"></div>
+
+        <!-- Summarizer sections -->
+        <div id="explanation-container">
+          <div class="explanation-text"></div>
+        </div>
+        <div id="followups-container">
+          <div class="followups-label">💡 You might also ask:</div>
+          <div class="followups-pills"></div>
+        </div>
 
         <!-- Action buttons -->
         <div id="action-buttons" class="action-buttons">
@@ -607,6 +660,7 @@
 
       function renderResult(data, utterance) {
         hideClarificationPrompt();
+        hideSummary();  // Clear previous summary
         currentData = data;  // Store current data
         currentData.question = utterance;
 
@@ -627,6 +681,10 @@
         addToHistory(utterance);
         questionInput.value = '';
 
+        // Fetch and display summary if available
+        if (data.has_summarizer) {
+          fetchAndDisplaySummary(data);
+        }
       }
 
       function renderNqlStatus(status) {
@@ -913,6 +971,73 @@
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+      }
+
+      // ============ Summarizer Functions ============
+      async function fetchAndDisplaySummary(queryData) {
+        try {
+          const response = await fetch(`${apiBase}/chat/summarize`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Session-Id': sessionId
+            },
+            body: JSON.stringify({
+              results: queryData.table,
+              plan: queryData.plan
+            })
+          });
+
+          if (!response.ok) {
+            console.warn('Summarizer failed, skipping');
+            hideSummary();
+            return;
+          }
+
+          const summary = await response.json();
+          displaySummary(summary);
+        } catch (error) {
+          console.error('Summary fetch error:', error);
+          hideSummary();
+        }
+      }
+
+      function displaySummary(summary) {
+        // Show and populate explanation
+        const explanationContainer = document.getElementById('explanation-container');
+        const explanationText = explanationContainer.querySelector('.explanation-text');
+        explanationText.textContent = summary.explanation;
+        explanationContainer.style.display = 'block';
+
+        // Show and populate follow-ups
+        const followupsContainer = document.getElementById('followups-container');
+        const followupsPills = followupsContainer.querySelector('.followups-pills');
+
+        followupsPills.innerHTML = summary.followups.map(query =>
+          `<button class="followup-pill" data-query="${escapeHtml(query)}">${escapeHtml(query)}</button>`
+        ).join('');
+
+        followupsContainer.style.display = 'block';
+
+        // Attach click handlers
+        followupsPills.querySelectorAll('.followup-pill').forEach(pill => {
+          pill.addEventListener('click', () => {
+            const query = pill.getAttribute('data-query');
+            questionInput.value = query;
+            submitQuestion(query);
+          });
+        });
+      }
+
+      function hideSummary() {
+        document.getElementById('explanation-container').style.display = 'none';
+        document.getElementById('followups-container').style.display = 'none';
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
       }
 
       // ============ History Management ============

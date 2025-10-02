@@ -18,6 +18,7 @@ from .conversation import (
     assess_ambiguity,
     apply_clarification_answer,
     rewrite_followup,
+    _is_self_contained_query,
 )
 from .executor import DuckDBExecutor
 from .llm_client import _load_env_once
@@ -26,6 +27,7 @@ from .nql import NQLValidationError, compile_payload, use_nql_enabled
 from .planner import build_plan, get_last_intent_engine, get_last_nql_status
 
 from .resolver import PlanResolutionError, PlanResolver, load_semantic_model
+from .summarizer import summarize_results, SummarizerError, HallucinationError
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
@@ -52,6 +54,11 @@ class ChatClarifyRequest(BaseModel):
     session_id: Optional[str] = None
 
     answer: str
+
+
+class SummarizeRequest(BaseModel):
+    results: List[Dict[str, Any]]
+    plan: Dict[str, Any]
 
 
 import logging, sys
@@ -458,6 +465,7 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
 def _build_conversation_response(response: Dict[str, Any]) -> Dict[str, Any]:
     response.setdefault("chips", _build_chips_from_nql(response.get("nql")))
     response.setdefault("status", "complete")
+    response["has_summarizer"] = _env_truthy(os.getenv("USE_SUMMARIZER"))
     return response
 
 
@@ -508,7 +516,10 @@ def chat_complete(
 
     nql_failure_status: Optional[Dict[str, Any]] = None
 
-    if gate_status is None and session.last_nql:
+    # Only use rewrite_followup if we have a previous NQL AND this is not a fresh self-contained query
+    is_followup = session.last_nql and not _is_self_contained_query(utterance)
+
+    if gate_status is None and is_followup:
         clarification = assess_ambiguity(session.last_nql, utterance)
         if clarification.needs_clarification:
             pending = _conversations.set_pending(
@@ -618,6 +629,55 @@ def chat_debug_state(session_id: str) -> Dict[str, Any]:
         return {"has_state": False, "last_nql": None}
     return {"has_state": state.last_nql is not None, "last_nql": state.last_nql}
 
+
+@app.post("/chat/summarize")
+def chat_summarize(payload: SummarizeRequest) -> Dict[str, Any]:
+    """Generate explanation and follow-up suggestions for query results.
+
+    Requires USE_SUMMARIZER=true in environment to be enabled.
+    """
+    _load_env_once()
+    use_summarizer = _env_truthy(os.getenv("USE_SUMMARIZER"))
+
+    if not use_summarizer:
+        raise HTTPException(
+            status_code=403,
+            detail="Summarizer is disabled. Set USE_SUMMARIZER=true to enable."
+        )
+
+    try:
+        summary = summarize_results(payload.results, payload.plan)
+
+        logger.info(
+            "summarize_success",
+            extra={
+                "result_count": len(payload.results),
+                "explanation_length": len(summary.get("explanation", "")),
+                "followup_count": len(summary.get("followups", [])),
+            }
+        )
+
+        return summary
+
+    except HallucinationError as exc:
+        logger.error(
+            "summarize_hallucination",
+            extra={"error": str(exc), "result_count": len(payload.results)}
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Summarizer produced invalid output. Please try again."
+        ) from exc
+
+    except SummarizerError as exc:
+        logger.error(
+            "summarize_error",
+            extra={"error": str(exc), "result_count": len(payload.results)}
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Summarization failed. Please try again."
+        ) from exc
 
 
 @app.get("/explain_last")
