@@ -390,6 +390,7 @@
       const clarificationQuestionEl = document.getElementById('clarification-question');
       const clarificationOptions = document.getElementById('clarification-options');
 
+
       const SESSION_STORAGE_KEY = 'scout-session-id';
 
       function generateSessionId() {
@@ -418,10 +419,13 @@
         return fresh;
       }
 
+
       let chartInstance;
       let lastFailedQuery = '';
       let currentData = null;  // Store current result data
+
       const sessionId = getSessionId();
+
       let pendingClarification = null;
 
       const apiBase = window.location.port === '3000' ? 'http://127.0.0.1:8000' : window.location.origin;
@@ -468,10 +472,12 @@
       async function sendCompleteRequest(utterance) {
         const response = await fetch(`${apiBase}/chat/complete`, {
           method: 'POST',
+
           headers: {
             'Content-Type': 'application/json',
             'X-Session-Id': sessionId
           },
+
           body: JSON.stringify({ session_id: sessionId, utterance })
         });
         if (!response.ok) {
@@ -496,10 +502,12 @@
         if (!pendingClarification) return;
         const response = await fetch(`${apiBase}/chat/clarify`, {
           method: 'POST',
+
           headers: {
             'Content-Type': 'application/json',
             'X-Session-Id': sessionId
           },
+
           body: JSON.stringify({ session_id: sessionId, answer })
         });
         if (!response.ok) {
@@ -528,7 +536,9 @@
       }
 
       function showClarificationPrompt(data) {
+
         renderNqlStatus(null);
+
         clarificationQuestionEl.textContent = data.question || 'Can you clarify?';
         clarificationOptions.innerHTML = '';
         const answers = data.suggested_answers || [];
@@ -616,6 +626,7 @@
         // Add to history
         addToHistory(utterance);
         questionInput.value = '';
+
       }
 
       function renderNqlStatus(status) {
@@ -644,6 +655,7 @@
           nqlStatusBanner.removeAttribute('title');
         }
         nqlStatusBanner.style.display = 'block';
+
       }
 
       function renderWarnings(warnings) {

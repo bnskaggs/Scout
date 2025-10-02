@@ -335,8 +335,10 @@ class ConversationStore:
             self._sessions[session_id] = ConversationState(session_id=session_id)
         return self._sessions[session_id]
 
+
     def peek(self, session_id: str) -> Optional[ConversationState]:
         return self._sessions.get(session_id)
+
 
     def update_last(self, session_id: str, nql: Dict[str, Any], plan: Dict[str, Any]) -> None:
         state = self.get(session_id)

@@ -20,8 +20,10 @@ from .conversation import (
     rewrite_followup,
 )
 from .executor import DuckDBExecutor
+
 from .nql import NQLValidationError, compile_payload, is_enabled as nql_is_enabled
 from .planner import build_plan, get_last_intent_engine, get_last_nql_status
+
 from .resolver import PlanResolutionError, PlanResolver, load_semantic_model
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -37,13 +39,17 @@ class AskRequest(BaseModel):
 
 
 class ChatCompleteRequest(BaseModel):
+
     session_id: Optional[str] = None
+
     utterance: str
     use_llm: Optional[bool] = None
 
 
 class ChatClarifyRequest(BaseModel):
+
     session_id: Optional[str] = None
+
     answer: str
 
 
@@ -403,16 +409,20 @@ def _build_conversation_response(response: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.post("/chat/complete")
+
 def chat_complete(
     payload: ChatCompleteRequest,
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
 ) -> Dict[str, Any]:
     session_id = _resolve_session_id(payload.session_id, x_session_id)
+
     utterance = payload.utterance.strip()
     if not utterance:
         raise HTTPException(status_code=400, detail="Utterance cannot be empty.")
 
+
     session = _conversations.get(session_id)
+
     if session.pending:
         raise HTTPException(
             status_code=409,
@@ -425,6 +435,7 @@ def chat_complete(
 
     prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
     prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
+
     use_nql = bool(_state.get("use_nql", True))
     disabled_status = None
     if not use_nql:
@@ -443,6 +454,7 @@ def chat_complete(
         if clarification.needs_clarification:
             pending = _conversations.set_pending(
                 session_id,
+
                 utterance,
                 clarification.question or "Can you clarify?",
                 clarification.missing_slots,
@@ -450,21 +462,26 @@ def chat_complete(
                 context=clarification.context,
             )
             chips = _build_chips_from_nql(session.last_nql)
+
             response_data = {
+
                 "status": "clarification_needed",
                 "question": pending.question,
                 "missing_slots": pending.missing_slots,
                 "suggested_answers": pending.suggested_answers,
                 "chips": chips,
+
                 "engine": "nql",
             }
             if disabled_status:
                 response_data["nql_status"] = disabled_status
             return response_data
 
+
         try:
             merged_nql = rewrite_followup(session.last_nql, utterance)
         except ValueError as exc:
+
             nql_failure_status = _build_nql_failure("generator", exc)
         else:
             try:
@@ -492,21 +509,26 @@ def chat_complete(
     else:
         status = nql_failure_status or planner_status or disabled_status or {"attempted": False}
         response["nql_status"] = status
+
         session.last_plan = response["plan"]
     return _build_conversation_response(response)
 
 
 @app.post("/chat/clarify")
+
 def chat_clarify(
     payload: ChatClarifyRequest,
     x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
 ) -> Dict[str, Any]:
     session_id = _resolve_session_id(payload.session_id, x_session_id)
+
     answer = payload.answer.strip()
     if not answer:
         raise HTTPException(status_code=400, detail="Answer cannot be empty.")
 
+
     session = _conversations.get(session_id)
+
     pending = session.pending
     if not pending:
         raise HTTPException(status_code=400, detail="No pending clarification for session.")
@@ -524,6 +546,7 @@ def chat_clarify(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     utterance = f"{pending.utterance} ({answer})"
+
     response = _execute_query(compiled.plan, utterance, intent_engine="nql")
     response["engine"] = "nql"
     response["nql_status"] = {"attempted": True, "valid": True}
@@ -537,6 +560,7 @@ def chat_debug_state(session_id: str) -> Dict[str, Any]:
     if not state:
         return {"has_state": False, "last_nql": None}
     return {"has_state": state.last_nql is not None, "last_nql": state.last_nql}
+
 
 
 @app.get("/explain_last")
