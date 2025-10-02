@@ -19,10 +19,13 @@ class CompiledNQL:
     nql: NQLQuery
 
 
+_USE_NQL_FLAG = os.getenv("USE_NQL", "true").lower() in {"1", "true", "yes", "on"}
+
+
 def is_enabled() -> bool:
     """Return True if the NQL pipeline is enabled via environment flag."""
 
-    return os.getenv("USE_NQL", "true").lower() in {"1", "true", "yes", "on"}
+    return _USE_NQL_FLAG
 
 
 def compile_payload(payload: Dict[str, Any], today: Optional[date] = None) -> CompiledNQL:

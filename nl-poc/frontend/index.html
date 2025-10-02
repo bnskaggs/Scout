@@ -94,6 +94,17 @@
         background: #fef3c7;
         color: #78350f;
       }
+      .nql-status-banner {
+        display: none;
+        margin: 1rem 0;
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        border: 1px solid #38bdf8;
+        background: #e0f2fe;
+        color: #0c4a6e;
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
       .warning-panel h3 {
         margin: 0 0 0.5rem;
         font-size: 1rem;
@@ -311,6 +322,8 @@
           <div class="result-meta" id="result-meta" aria-live="polite"></div>
         </div>
 
+        <div id="nql-status" class="nql-status-banner" role="status" aria-live="polite"></div>
+
         <!-- Filter chips -->
         <div id="filter-chips" class="filter-chips"></div>
 
@@ -364,6 +377,7 @@
       const chartCanvas = document.getElementById('chart');
       const warningPanel = document.getElementById('warning-panel');
       const warningList = document.getElementById('warning-list');
+      const nqlStatusBanner = document.getElementById('nql-status');
 
       const resultMeta = document.getElementById('result-meta');
       const filterChipsContainer = document.getElementById('filter-chips');
@@ -376,12 +390,42 @@
       const clarificationQuestionEl = document.getElementById('clarification-question');
       const clarificationOptions = document.getElementById('clarification-options');
 
+
+      const SESSION_STORAGE_KEY = 'scout-session-id';
+
+      function generateSessionId() {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+          return crypto.randomUUID();
+        }
+        const random = Math.random().toString(16).slice(2);
+        return `session-${Date.now()}-${random}`;
+      }
+
+      function getSessionId() {
+        try {
+          const stored = window.localStorage?.getItem(SESSION_STORAGE_KEY);
+          if (stored) {
+            return stored;
+          }
+        } catch (err) {
+          // Ignore storage access issues and fall back to a fresh id
+        }
+        const fresh = generateSessionId();
+        try {
+          window.localStorage?.setItem(SESSION_STORAGE_KEY, fresh);
+        } catch (err) {
+          // Ignore storage write issues
+        }
+        return fresh;
+      }
+
+
       let chartInstance;
       let lastFailedQuery = '';
       let currentData = null;  // Store current result data
-      const sessionId = typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+      const sessionId = getSessionId();
+
       let pendingClarification = null;
 
       const apiBase = window.location.port === '3000' ? 'http://127.0.0.1:8000' : window.location.origin;
@@ -401,6 +445,7 @@
         }
 
         hideErrorPanel();
+        renderNqlStatus(null);
         const originalButtonText = askBtn.textContent;
         askBtn.disabled = true;
         askBtn.textContent = pendingClarification ? 'Clarifying...' : 'Thinking...';
@@ -427,7 +472,12 @@
       async function sendCompleteRequest(utterance) {
         const response = await fetch(`${apiBase}/chat/complete`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': sessionId
+          },
+
           body: JSON.stringify({ session_id: sessionId, utterance })
         });
         if (!response.ok) {
@@ -452,7 +502,12 @@
         if (!pendingClarification) return;
         const response = await fetch(`${apiBase}/chat/clarify`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': sessionId
+          },
+
           body: JSON.stringify({ session_id: sessionId, answer })
         });
         if (!response.ok) {
@@ -481,6 +536,9 @@
       }
 
       function showClarificationPrompt(data) {
+
+        renderNqlStatus(null);
+
         clarificationQuestionEl.textContent = data.question || 'Can you clarify?';
         clarificationOptions.innerHTML = '';
         const answers = data.suggested_answers || [];
@@ -555,6 +613,7 @@
         resultCard.style.display = 'block';
         answerEl.textContent = data.answer;
         renderMetadata(data);
+        renderNqlStatus(data.nql_status || null);
         renderWarnings(data.warnings || []);
         sqlEl.textContent = data.sql;
         planEl.textContent = JSON.stringify(data.plan, null, 2);
@@ -567,6 +626,36 @@
         // Add to history
         addToHistory(utterance);
         questionInput.value = '';
+
+      }
+
+      function renderNqlStatus(status) {
+        if (!status || status.valid) {
+          nqlStatusBanner.style.display = 'none';
+          nqlStatusBanner.textContent = '';
+          nqlStatusBanner.removeAttribute('title');
+          return;
+        }
+
+        let message;
+        if (status.attempted === false) {
+          const reason = status.reason || 'nql_not_attempted';
+          message = `NQL not used (${reason})`;
+        } else {
+          const stage = status.stage ? status.stage.toUpperCase() : 'UNKNOWN';
+          const reason = status.reason || 'error';
+          const fallback = status.fallback ? status.fallback.toUpperCase() : 'LEGACY';
+          message = `NQL fallback (${stage}): ${reason} → ${fallback}`;
+        }
+
+        nqlStatusBanner.textContent = message;
+        if (status.detail) {
+          nqlStatusBanner.title = status.detail;
+        } else {
+          nqlStatusBanner.removeAttribute('title');
+        }
+        nqlStatusBanner.style.display = 'block';
+
       }
 
       function renderWarnings(warnings) {
@@ -582,7 +671,9 @@
       function renderMetadata(data) {
         const badges = [];
         if (data.engine) {
-          badges.push(`<span><strong>Engine:</strong> ${data.engine}</span>`);
+          const engine = typeof data.engine === 'string' ? data.engine.toLowerCase() : '';
+          const engineLabel = engine === 'nql' ? 'NQL' : engine === 'legacy' ? 'Legacy' : data.engine;
+          badges.push(`<span><strong>Engine:</strong> ${engineLabel}</span>`);
         }
         const runtime = formatRuntime(data.runtime_ms);
         if (runtime) {

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import duckdb
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -20,8 +20,10 @@ from .conversation import (
     rewrite_followup,
 )
 from .executor import DuckDBExecutor
-from .nql import NQLValidationError, compile_payload
-from .planner import build_plan, get_last_intent_engine
+
+from .nql import NQLValidationError, compile_payload, is_enabled as nql_is_enabled
+from .planner import build_plan, get_last_intent_engine, get_last_nql_status
+
 from .resolver import PlanResolutionError, PlanResolver, load_semantic_model
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -37,13 +39,17 @@ class AskRequest(BaseModel):
 
 
 class ChatCompleteRequest(BaseModel):
-    session_id: str
+
+    session_id: Optional[str] = None
+
     utterance: str
     use_llm: Optional[bool] = None
 
 
 class ChatClarifyRequest(BaseModel):
-    session_id: str
+
+    session_id: Optional[str] = None
+
     answer: str
 
 
@@ -81,6 +87,30 @@ def _quote(identifier: str) -> str:
     if identifier.startswith('"') and identifier.endswith('"'):
         return identifier
     return f'"{identifier}"'
+
+
+def _slug_reason(message: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", message.lower()).strip("_")
+    return slug or "error"
+
+
+def _resolve_session_id(body_value: Optional[str], header_value: Optional[str]) -> str:
+    session_id = header_value or body_value
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    return session_id
+
+
+def _build_nql_failure(stage: str, error: Exception) -> Dict[str, Any]:
+    message = str(error)
+    return {
+        "attempted": True,
+        "valid": False,
+        "stage": stage,
+        "reason": _slug_reason(message),
+        "detail": message,
+        "fallback": "legacy",
+    }
 
 
 def _normalise(name: str) -> str:
@@ -145,6 +175,7 @@ def startup_event() -> None:
     _state["executor"] = executor
     _state["semantic"] = semantic
     _state["resolver"] = PlanResolver(semantic, executor)
+    _state["use_nql"] = nql_is_enabled()
 
 
 @app.on_event("shutdown")
@@ -378,12 +409,20 @@ def _build_conversation_response(response: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.post("/chat/complete")
-def chat_complete(payload: ChatCompleteRequest) -> Dict[str, Any]:
+
+def chat_complete(
+    payload: ChatCompleteRequest,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
+) -> Dict[str, Any]:
+    session_id = _resolve_session_id(payload.session_id, x_session_id)
+
     utterance = payload.utterance.strip()
     if not utterance:
         raise HTTPException(status_code=400, detail="Utterance cannot be empty.")
 
-    session = _conversations.get(payload.session_id)
+
+    session = _conversations.get(session_id)
+
     if session.pending:
         raise HTTPException(
             status_code=409,
@@ -397,11 +436,25 @@ def chat_complete(payload: ChatCompleteRequest) -> Dict[str, Any]:
     prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
     prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
 
-    if session.last_nql:
+    use_nql = bool(_state.get("use_nql", True))
+    disabled_status = None
+    if not use_nql:
+        disabled_status = {
+            "attempted": False,
+            "valid": False,
+            "reason": "nql_disabled",
+            "detail": "NQL pipeline disabled",
+            "fallback": "legacy",
+        }
+
+    nql_failure_status: Optional[Dict[str, Any]] = None
+
+    if use_nql and session.last_nql:
         clarification = assess_ambiguity(session.last_nql, utterance)
         if clarification.needs_clarification:
             pending = _conversations.set_pending(
-                payload.session_id,
+                session_id,
+
                 utterance,
                 clarification.question or "Can you clarify?",
                 clarification.missing_slots,
@@ -409,48 +462,73 @@ def chat_complete(payload: ChatCompleteRequest) -> Dict[str, Any]:
                 context=clarification.context,
             )
             chips = _build_chips_from_nql(session.last_nql)
-            return {
+
+            response_data = {
+
                 "status": "clarification_needed",
                 "question": pending.question,
                 "missing_slots": pending.missing_slots,
                 "suggested_answers": pending.suggested_answers,
                 "chips": chips,
+
+                "engine": "nql",
             }
+            if disabled_status:
+                response_data["nql_status"] = disabled_status
+            return response_data
+
 
         try:
             merged_nql = rewrite_followup(session.last_nql, utterance)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        try:
-            compiled = compile_payload(merged_nql)
-        except NQLValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        response = _execute_query(compiled.plan, utterance, intent_engine="conversation")
-        _conversations.update_last(
-            payload.session_id, compiled.nql.dict(), response["plan"]
-        )
-        return _build_conversation_response(response)
+            nql_failure_status = _build_nql_failure("generator", exc)
+        else:
+            try:
+                compiled = compile_payload(merged_nql)
+            except NQLValidationError as exc:
+                nql_failure_status = _build_nql_failure("validator", exc)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                nql_failure_status = _build_nql_failure("compiler", exc)
+            else:
+                response = _execute_query(compiled.plan, utterance, intent_engine="nql")
+                response["engine"] = "nql"
+                response["nql_status"] = {"attempted": True, "valid": True}
+                _conversations.update_last(session_id, compiled.nql.dict(), response["plan"])
+                return _build_conversation_response(response)
 
     plan = build_plan(utterance, prefer_llm=prefer_llm)
-    intent_engine = get_last_intent_engine()
-    response = _execute_query(plan, utterance, intent_engine=intent_engine)
+    planner_status = get_last_nql_status()
+    engine = "nql" if plan.get("_nql") else "legacy"
+    response = _execute_query(plan, utterance, intent_engine=engine)
+    response["engine"] = engine
     nql_payload = response.get("nql")
-    if nql_payload:
-        _conversations.update_last(payload.session_id, nql_payload, response["plan"])
+    if nql_payload and engine == "nql":
+        response["nql_status"] = planner_status or {"attempted": True, "valid": True}
+        _conversations.update_last(session_id, nql_payload, response["plan"])
     else:
+        status = nql_failure_status or planner_status or disabled_status or {"attempted": False}
+        response["nql_status"] = status
+
         session.last_plan = response["plan"]
     return _build_conversation_response(response)
 
 
 @app.post("/chat/clarify")
-def chat_clarify(payload: ChatClarifyRequest) -> Dict[str, Any]:
+
+def chat_clarify(
+    payload: ChatClarifyRequest,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
+) -> Dict[str, Any]:
+    session_id = _resolve_session_id(payload.session_id, x_session_id)
+
     answer = payload.answer.strip()
     if not answer:
         raise HTTPException(status_code=400, detail="Answer cannot be empty.")
 
-    session = _conversations.get(payload.session_id)
+
+    session = _conversations.get(session_id)
+
     pending = session.pending
     if not pending:
         raise HTTPException(status_code=400, detail="No pending clarification for session.")
@@ -468,9 +546,21 @@ def chat_clarify(payload: ChatClarifyRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     utterance = f"{pending.utterance} ({answer})"
-    response = _execute_query(compiled.plan, utterance, intent_engine="conversation")
-    _conversations.update_last(payload.session_id, compiled.nql.dict(), response["plan"])
+
+    response = _execute_query(compiled.plan, utterance, intent_engine="nql")
+    response["engine"] = "nql"
+    response["nql_status"] = {"attempted": True, "valid": True}
+    _conversations.update_last(session_id, compiled.nql.dict(), response["plan"])
     return _build_conversation_response(response)
+
+
+@app.get("/chat/debug-state")
+def chat_debug_state(session_id: str) -> Dict[str, Any]:
+    state = _conversations.peek(session_id)
+    if not state:
+        return {"has_state": False, "last_nql": None}
+    return {"has_state": state.last_nql is not None, "last_nql": state.last_nql}
+
 
 
 @app.get("/explain_last")
