@@ -1,0 +1,143 @@
+{
+  "today": "2024-07-15",
+  "initial_nql": {
+    "nql_version": "0.1",
+    "intent": "aggregate",
+    "dataset": "la_crime",
+    "metrics": [
+      {"name": "incidents", "agg": "count", "alias": "incidents"}
+    ],
+    "time": {
+      "grain": "month",
+      "window": {
+        "type": "single_month",
+        "start": "2024-06-01",
+        "end": null,
+        "exclusive_end": false,
+        "n": null
+      },
+      "tz": "America/Chicago"
+    },
+    "filters": [
+      {"field": "month", "op": "=", "value": "2024-06-01", "type": "date", "notes": null}
+    ],
+    "dimensions": [],
+    "group_by": [],
+    "sort": [],
+    "limit": 100,
+    "compare": null,
+    "flags": {
+      "trend": null,
+      "strict_json": true,
+      "require_grouping_for_trend": true,
+      "like_passthrough": true,
+      "single_month_equals": true,
+      "quarter_exclusive_end": true,
+      "rowcap_hint": 10000
+    },
+    "provenance": {
+      "utterance": null,
+      "retrieval_notes": [],
+      "confidence": null,
+      "critic_pass": []
+    }
+  },
+  "turns": [
+    {
+      "utterance": "turn on MoM",
+      "expected": {
+        "nql_version": "0.1",
+        "intent": "aggregate",
+        "dataset": "la_crime",
+        "metrics": [
+          {"name": "incidents", "agg": "count", "alias": "incidents"}
+        ],
+        "time": {
+          "grain": "month",
+          "window": {
+            "type": "single_month",
+            "start": "2024-06-01",
+            "end": null,
+            "exclusive_end": false,
+            "n": null
+          },
+          "tz": "America/Chicago"
+        },
+        "dimensions": [],
+        "filters": [
+          {"field": "month", "op": "=", "value": "2024-06-01", "type": "date", "notes": null}
+        ],
+        "compare": {
+          "type": "mom",
+          "baseline": null,
+          "internal_window": {
+            "expand_prior": false
+          }
+        },
+        "group_by": [],
+        "sort": [],
+        "limit": 100,
+        "flags": {
+          "trend": null,
+          "strict_json": true,
+          "require_grouping_for_trend": true,
+          "like_passthrough": true,
+          "single_month_equals": true,
+          "quarter_exclusive_end": true,
+          "rowcap_hint": 10000
+        },
+        "provenance": {
+          "utterance": "turn on MoM",
+          "retrieval_notes": [],
+          "confidence": null,
+          "critic_pass": []
+        }
+      }
+    },
+    {
+      "utterance": "turn off MoM",
+      "expected": {
+        "nql_version": "0.1",
+        "intent": "aggregate",
+        "dataset": "la_crime",
+        "metrics": [
+          {"name": "incidents", "agg": "count", "alias": "incidents"}
+        ],
+        "time": {
+          "grain": "month",
+          "window": {
+            "type": "single_month",
+            "start": "2024-06-01",
+            "end": null,
+            "exclusive_end": false,
+            "n": null
+          },
+          "tz": "America/Chicago"
+        },
+        "dimensions": [],
+        "filters": [
+          {"field": "month", "op": "=", "value": "2024-06-01", "type": "date", "notes": null}
+        ],
+        "compare": null,
+        "group_by": [],
+        "sort": [],
+        "limit": 100,
+        "flags": {
+          "trend": null,
+          "strict_json": true,
+          "require_grouping_for_trend": true,
+          "like_passthrough": true,
+          "single_month_equals": true,
+          "quarter_exclusive_end": true,
+          "rowcap_hint": 10000
+        },
+        "provenance": {
+          "utterance": "turn off MoM",
+          "retrieval_notes": [],
+          "confidence": null,
+          "critic_pass": []
+        }
+      }
+    }
+  ]
+}

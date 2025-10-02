@@ -8,13 +8,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import duckdb
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import guardrails, sql_builder, viz
+from .conversation import (
+    ConversationStore,
+    assess_ambiguity,
+    apply_clarification_answer,
+    rewrite_followup,
+)
 from .executor import DuckDBExecutor
-from .planner import build_plan, get_last_intent_engine
+from .nql import NQLValidationError, compile_payload, is_enabled as nql_is_enabled
+from .planner import build_plan, get_last_intent_engine, get_last_nql_status
 from .resolver import PlanResolutionError, PlanResolver, load_semantic_model
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -27,6 +34,17 @@ SEMANTIC_PATH = CONFIG_DIR / "semantic.yml"
 class AskRequest(BaseModel):
     question: str
     use_llm: Optional[bool] = None
+
+
+class ChatCompleteRequest(BaseModel):
+    session_id: Optional[str] = None
+    utterance: str
+    use_llm: Optional[bool] = None
+
+
+class ChatClarifyRequest(BaseModel):
+    session_id: Optional[str] = None
+    answer: str
 
 
 import logging, sys
@@ -56,11 +74,37 @@ _state: Dict[str, Any] = {
     "source_csv": None,
 }
 
+_conversations = ConversationStore()
+
 
 def _quote(identifier: str) -> str:
     if identifier.startswith('"') and identifier.endswith('"'):
         return identifier
     return f'"{identifier}"'
+
+
+def _slug_reason(message: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", message.lower()).strip("_")
+    return slug or "error"
+
+
+def _resolve_session_id(body_value: Optional[str], header_value: Optional[str]) -> str:
+    session_id = header_value or body_value
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    return session_id
+
+
+def _build_nql_failure(stage: str, error: Exception) -> Dict[str, Any]:
+    message = str(error)
+    return {
+        "attempted": True,
+        "valid": False,
+        "stage": stage,
+        "reason": _slug_reason(message),
+        "detail": message,
+        "fallback": "legacy",
+    }
 
 
 def _normalise(name: str) -> str:
@@ -125,6 +169,7 @@ def startup_event() -> None:
     _state["executor"] = executor
     _state["semantic"] = semantic
     _state["resolver"] = PlanResolver(semantic, executor)
+    _state["use_nql"] = nql_is_enabled()
 
 
 @app.on_event("shutdown")
@@ -195,24 +240,18 @@ def _format_change_pct(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return formatted_records
 
 
-@app.post("/ask")
-def ask(payload: AskRequest) -> Dict[str, Any]:
-    question = payload.question.strip()
-    if not question:
-        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+def _execute_query(plan: Dict[str, Any], utterance: str, *, intent_engine: str) -> Dict[str, Any]:
     executor: DuckDBExecutor = _state["executor"]
     resolver: PlanResolver = _state["resolver"]
     semantic = _state["semantic"]
 
-    prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
-    prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
-
-    plan = build_plan(question, prefer_llm=prefer_llm)
-    intent_engine = get_last_intent_engine()
     try:
         resolved_plan = resolver.resolve(plan)
     except PlanResolutionError as exc:
-        raise HTTPException(status_code=400, detail={"message": str(exc), "suggestions": exc.suggestions}) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "suggestions": exc.suggestions},
+        ) from exc
 
     sql = sql_builder.build(resolved_plan, semantic)
     try:
@@ -227,7 +266,7 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
     narrative = viz.build_narrative(resolved_plan, records)
 
     plan_metadata = {
-        "utterance": question,
+        "utterance": utterance,
         "nql": plan.get("_nql"),
         "critic_pass": plan.get("_critic_pass", []),
         "engine": intent_engine,
@@ -236,13 +275,16 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
     }
     llm_logger.info("telemetry=%s", json.dumps(plan_metadata, default=str))
 
-    # Check for rowcap warning
-    warnings: list[str] = []
+    warnings: List[str] = []
     rowcap_warning = guardrails.check_rowcap_exceeded(result.truncated)
     if rowcap_warning:
         warnings.append(rowcap_warning)
 
-    metric_defs = {metric: semantic.metrics[metric].sql_expression() for metric in resolved_plan.get("metrics", [])}
+    metric_defs = {
+        metric: semantic.metrics[metric].sql_expression()
+        for metric in resolved_plan.get("metrics", [])
+    }
+
     response = {
         "answer": narrative,
         "table": records,
@@ -260,7 +302,9 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
             "source": _state.get("source_csv"),
             "runtime_ms": result.runtime_ms,
         },
+        "nql": plan.get("_nql"),
     }
+
     _state["last_debug"] = {
         "plan": resolved_plan,
         "sql": sql,
@@ -268,6 +312,231 @@ def ask(payload: AskRequest) -> Dict[str, Any]:
         "rowcount": result.rowcount,
     }
     return response
+
+
+def _describe_time_window(window: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not window:
+        return None
+    window_type = window.get("type")
+    if window_type == "relative_months":
+        months = window.get("n") or 12
+        return f"Last {months} months"
+    if window_type == "quarter":
+        start = window.get("start")
+        end = window.get("end")
+        if start and end:
+            return f"Quarter starting {start}"
+        return "Last quarter"
+    if window_type == "single_month":
+        start = window.get("start")
+        if start:
+            return f"Month = {start}"
+        return "Single month"
+    if window_type == "ytd":
+        return "Year to date"
+    if window_type == "absolute":
+        start = window.get("start")
+        end = window.get("end")
+        if start and end:
+            return f"{start} to {end}"
+        if start:
+            return f"Since {start}"
+    return window_type.replace("_", " ").title() if window_type else None
+
+
+def _build_chips_from_nql(nql_payload: Optional[Dict[str, Any]]) -> Dict[str, List[str]]:
+    if not nql_payload:
+        return {"dimensions": [], "filters": [], "time": []}
+
+    dims: List[str] = []
+    for dim in nql_payload.get("dimensions", []):
+        if dim and dim not in dims and dim != "month":
+            dims.append(dim)
+    for group_dim in nql_payload.get("group_by", []):
+        if group_dim and group_dim not in dims and group_dim != "month":
+            dims.append(group_dim)
+
+    filter_chips: List[str] = []
+    for filt in nql_payload.get("filters", []):
+        field = filt.get("field")
+        if field == "month":
+            continue
+        op = filt.get("op")
+        value = filt.get("value")
+        if isinstance(value, list):
+            value_str = ", ".join(str(v) for v in value)
+        else:
+            value_str = str(value)
+        filter_chips.append(f"{field} {op} {value_str}")
+
+    time_window = _describe_time_window(nql_payload.get("time", {}).get("window"))
+    time_chips = [time_window] if time_window else []
+
+    return {
+        "dimensions": dims,
+        "filters": filter_chips,
+        "time": time_chips,
+    }
+
+
+@app.post("/ask")
+def ask(payload: AskRequest) -> Dict[str, Any]:
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+    executor: DuckDBExecutor = _state["executor"]
+    resolver: PlanResolver = _state["resolver"]
+    semantic = _state["semantic"]
+
+    prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
+    prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
+
+    plan = build_plan(question, prefer_llm=prefer_llm)
+    intent_engine = get_last_intent_engine()
+    return _execute_query(plan, question, intent_engine=intent_engine)
+
+
+def _build_conversation_response(response: Dict[str, Any]) -> Dict[str, Any]:
+    response.setdefault("chips", _build_chips_from_nql(response.get("nql")))
+    response.setdefault("status", "complete")
+    return response
+
+
+@app.post("/chat/complete")
+def chat_complete(
+    payload: ChatCompleteRequest,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
+) -> Dict[str, Any]:
+    session_id = _resolve_session_id(payload.session_id, x_session_id)
+    utterance = payload.utterance.strip()
+    if not utterance:
+        raise HTTPException(status_code=400, detail="Utterance cannot be empty.")
+
+    session = _conversations.get(session_id)
+    if session.pending:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Pending clarification must be resolved first.",
+                "question": session.pending.question,
+                "missing_slots": session.pending.missing_slots,
+            },
+        )
+
+    prefer_llm_env = os.getenv("INTENT_USE_LLM", "true").lower() in ("1", "true", "yes")
+    prefer_llm = prefer_llm_env if payload.use_llm is None else bool(payload.use_llm)
+    use_nql = bool(_state.get("use_nql", True))
+    disabled_status = None
+    if not use_nql:
+        disabled_status = {
+            "attempted": False,
+            "valid": False,
+            "reason": "nql_disabled",
+            "detail": "NQL pipeline disabled",
+            "fallback": "legacy",
+        }
+
+    nql_failure_status: Optional[Dict[str, Any]] = None
+
+    if use_nql and session.last_nql:
+        clarification = assess_ambiguity(session.last_nql, utterance)
+        if clarification.needs_clarification:
+            pending = _conversations.set_pending(
+                session_id,
+                utterance,
+                clarification.question or "Can you clarify?",
+                clarification.missing_slots,
+                clarification.suggested_answers,
+                context=clarification.context,
+            )
+            chips = _build_chips_from_nql(session.last_nql)
+            response_data = {
+                "status": "clarification_needed",
+                "question": pending.question,
+                "missing_slots": pending.missing_slots,
+                "suggested_answers": pending.suggested_answers,
+                "chips": chips,
+                "engine": "nql",
+            }
+            if disabled_status:
+                response_data["nql_status"] = disabled_status
+            return response_data
+
+        try:
+            merged_nql = rewrite_followup(session.last_nql, utterance)
+        except ValueError as exc:
+            nql_failure_status = _build_nql_failure("generator", exc)
+        else:
+            try:
+                compiled = compile_payload(merged_nql)
+            except NQLValidationError as exc:
+                nql_failure_status = _build_nql_failure("validator", exc)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                nql_failure_status = _build_nql_failure("compiler", exc)
+            else:
+                response = _execute_query(compiled.plan, utterance, intent_engine="nql")
+                response["engine"] = "nql"
+                response["nql_status"] = {"attempted": True, "valid": True}
+                _conversations.update_last(session_id, compiled.nql.dict(), response["plan"])
+                return _build_conversation_response(response)
+
+    plan = build_plan(utterance, prefer_llm=prefer_llm)
+    planner_status = get_last_nql_status()
+    engine = "nql" if plan.get("_nql") else "legacy"
+    response = _execute_query(plan, utterance, intent_engine=engine)
+    response["engine"] = engine
+    nql_payload = response.get("nql")
+    if nql_payload and engine == "nql":
+        response["nql_status"] = planner_status or {"attempted": True, "valid": True}
+        _conversations.update_last(session_id, nql_payload, response["plan"])
+    else:
+        status = nql_failure_status or planner_status or disabled_status or {"attempted": False}
+        response["nql_status"] = status
+        session.last_plan = response["plan"]
+    return _build_conversation_response(response)
+
+
+@app.post("/chat/clarify")
+def chat_clarify(
+    payload: ChatClarifyRequest,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-Id"),
+) -> Dict[str, Any]:
+    session_id = _resolve_session_id(payload.session_id, x_session_id)
+    answer = payload.answer.strip()
+    if not answer:
+        raise HTTPException(status_code=400, detail="Answer cannot be empty.")
+
+    session = _conversations.get(session_id)
+    pending = session.pending
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending clarification for session.")
+    if not session.last_nql:
+        raise HTTPException(status_code=400, detail="No prior NQL state for clarification.")
+
+    try:
+        merged_nql = apply_clarification_answer(session.last_nql, pending, answer)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        compiled = compile_payload(merged_nql)
+    except NQLValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    utterance = f"{pending.utterance} ({answer})"
+    response = _execute_query(compiled.plan, utterance, intent_engine="nql")
+    response["engine"] = "nql"
+    response["nql_status"] = {"attempted": True, "valid": True}
+    _conversations.update_last(session_id, compiled.nql.dict(), response["plan"])
+    return _build_conversation_response(response)
+
+
+@app.get("/chat/debug-state")
+def chat_debug_state(session_id: str) -> Dict[str, Any]:
+    state = _conversations.peek(session_id)
+    if not state:
+        return {"has_state": False, "last_nql": None}
+    return {"has_state": state.last_nql is not None, "last_nql": state.last_nql}
 
 
 @app.get("/explain_last")

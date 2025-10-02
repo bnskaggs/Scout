@@ -94,6 +94,17 @@
         background: #fef3c7;
         color: #78350f;
       }
+      .nql-status-banner {
+        display: none;
+        margin: 1rem 0;
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        border: 1px solid #38bdf8;
+        background: #e0f2fe;
+        color: #0c4a6e;
+        font-size: 0.9rem;
+        font-weight: 500;
+      }
       .warning-panel h3 {
         margin: 0 0 0.5rem;
         font-size: 1rem;
@@ -171,7 +182,6 @@
       .filter-chip {
         display: inline-flex;
         align-items: center;
-        gap: 0.5rem;
         background: #dbeafe;
         color: #1e40af;
         border: 1px solid #93c5fd;
@@ -179,20 +189,6 @@
         padding: 0.35rem 0.75rem;
         font-size: 0.9rem;
         font-weight: 500;
-      }
-      .filter-chip .remove-btn {
-        background: transparent;
-        border: none;
-        color: #1e40af;
-        cursor: pointer;
-        padding: 0;
-        margin: 0;
-        font-size: 1.2rem;
-        line-height: 1;
-        font-weight: bold;
-      }
-      .filter-chip .remove-btn:hover {
-        color: #1e3a8a;
       }
 
       /* Action buttons */
@@ -209,6 +205,40 @@
       }
       .action-buttons button:hover {
         background: #059669;
+      }
+
+      .clarification-panel {
+        display: none;
+        background: #eef2ff;
+        border: 1px solid #c7d2fe;
+        border-radius: 6px;
+        padding: 1rem;
+        margin-top: 1rem;
+      }
+
+      .clarification-panel p {
+        margin: 0 0 0.75rem;
+        font-weight: 600;
+      }
+
+      .clarification-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .clarification-options button {
+        background: #4f46e5;
+        border: none;
+        color: #fff;
+        padding: 0.4rem 0.8rem;
+        border-radius: 999px;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+
+      .clarification-options button:hover {
+        background: #4338ca;
       }
 
       /* History sidebar */
@@ -281,12 +311,18 @@
           <p id="error-message" class="error-message"></p>
           <div id="suggestions" class="suggestions"></div>
         </div>
+        <div id="clarification-panel" class="clarification-panel" aria-live="polite">
+          <p id="clarification-question"></p>
+          <div id="clarification-options" class="clarification-options"></div>
+        </div>
       </div>
       <div class="card" id="result-card" style="display: none;">
         <div class="result-header">
           <h2 id="answer"></h2>
           <div class="result-meta" id="result-meta" aria-live="polite"></div>
         </div>
+
+        <div id="nql-status" class="nql-status-banner" role="status" aria-live="polite"></div>
 
         <!-- Filter chips -->
         <div id="filter-chips" class="filter-chips"></div>
@@ -341,6 +377,7 @@
       const chartCanvas = document.getElementById('chart');
       const warningPanel = document.getElementById('warning-panel');
       const warningList = document.getElementById('warning-list');
+      const nqlStatusBanner = document.getElementById('nql-status');
 
       const resultMeta = document.getElementById('result-meta');
       const filterChipsContainer = document.getElementById('filter-chips');
@@ -349,10 +386,43 @@
       const copySqlBtn = document.getElementById('copy-sql-btn');
       const copyJsonBtn = document.getElementById('copy-json-btn');
       const downloadCsvBtn = document.getElementById('download-csv-btn');
+      const clarificationPanel = document.getElementById('clarification-panel');
+      const clarificationQuestionEl = document.getElementById('clarification-question');
+      const clarificationOptions = document.getElementById('clarification-options');
+
+      const SESSION_STORAGE_KEY = 'scout-session-id';
+
+      function generateSessionId() {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+          return crypto.randomUUID();
+        }
+        const random = Math.random().toString(16).slice(2);
+        return `session-${Date.now()}-${random}`;
+      }
+
+      function getSessionId() {
+        try {
+          const stored = window.localStorage?.getItem(SESSION_STORAGE_KEY);
+          if (stored) {
+            return stored;
+          }
+        } catch (err) {
+          // Ignore storage access issues and fall back to a fresh id
+        }
+        const fresh = generateSessionId();
+        try {
+          window.localStorage?.setItem(SESSION_STORAGE_KEY, fresh);
+        } catch (err) {
+          // Ignore storage write issues
+        }
+        return fresh;
+      }
 
       let chartInstance;
       let lastFailedQuery = '';
       let currentData = null;  // Store current result data
+      const sessionId = getSessionId();
+      let pendingClarification = null;
 
       const apiBase = window.location.port === '3000' ? 'http://127.0.0.1:8000' : window.location.origin;
 
@@ -371,41 +441,113 @@
         }
 
         hideErrorPanel();
+        renderNqlStatus(null);
         const originalButtonText = askBtn.textContent;
         askBtn.disabled = true;
-        askBtn.textContent = 'Thinking...';
+        askBtn.textContent = pendingClarification ? 'Clarifying...' : 'Thinking...';
 
         try {
-          const response = await fetch(`${apiBase}/ask`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question })
-          });
-          if (!response.ok) {
-            let errorDetail = {};
-            try {
-              errorDetail = await response.json();
-            } catch (parseErr) {
-              // ignore JSON parse errors and fallback to generic message
-            }
-            const detail = errorDetail?.detail ?? errorDetail;
-            const message = typeof detail === 'string' ? detail : detail?.message || 'Request failed';
-            const suggestions = Array.isArray(detail?.suggestions) ? detail.suggestions : [];
-            const err = new Error(message);
-            err.suggestions = suggestions;
-            throw err;
+          if (pendingClarification) {
+            await sendClarificationAnswer(question);
+          } else {
+            await sendCompleteRequest(question);
           }
-          const data = await response.json();
-          renderResult(data);
         } catch (err) {
           const message = err?.message || 'Something went wrong';
           const suggestions = Array.isArray(err?.suggestions) ? err.suggestions : [];
-          lastFailedQuery = question;  // Save the query that failed
+          if (!pendingClarification) {
+            lastFailedQuery = question;
+          }
           showErrorPanel(message, suggestions);
         } finally {
           askBtn.disabled = false;
           askBtn.textContent = originalButtonText;
         }
+      }
+
+      async function sendCompleteRequest(utterance) {
+        const response = await fetch(`${apiBase}/chat/complete`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': sessionId
+          },
+          body: JSON.stringify({ session_id: sessionId, utterance })
+        });
+        if (!response.ok) {
+          throw await buildError(response);
+        }
+        const data = await response.json();
+        if (data.status === 'clarification_needed') {
+          pendingClarification = {
+            question: data.question,
+            missing: data.missing_slots || [],
+            suggested: data.suggested_answers || [],
+            originalUtterance: utterance,
+          };
+          showClarificationPrompt(data);
+          return;
+        }
+        pendingClarification = null;
+        renderResult(data, utterance);
+      }
+
+      async function sendClarificationAnswer(answer) {
+        if (!pendingClarification) return;
+        const response = await fetch(`${apiBase}/chat/clarify`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Id': sessionId
+          },
+          body: JSON.stringify({ session_id: sessionId, answer })
+        });
+        if (!response.ok) {
+          throw await buildError(response);
+        }
+        const data = await response.json();
+        const original = pendingClarification?.originalUtterance;
+        pendingClarification = null;
+        const combined = original ? `${original} (${answer})` : answer;
+        renderResult(data, combined);
+      }
+
+      async function buildError(response) {
+        let errorDetail = {};
+        try {
+          errorDetail = await response.json();
+        } catch (parseErr) {
+          // ignore JSON parse errors and fallback to generic message
+        }
+        const detail = errorDetail?.detail ?? errorDetail;
+        const message = typeof detail === 'string' ? detail : detail?.message || 'Request failed';
+        const suggestions = Array.isArray(detail?.suggestions) ? detail.suggestions : [];
+        const err = new Error(message);
+        err.suggestions = suggestions;
+        return err;
+      }
+
+      function showClarificationPrompt(data) {
+        renderNqlStatus(null);
+        clarificationQuestionEl.textContent = data.question || 'Can you clarify?';
+        clarificationOptions.innerHTML = '';
+        const answers = data.suggested_answers || [];
+        answers.slice(0, 4).forEach(answer => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = answer;
+          button.addEventListener('click', () => submitQuestion(answer));
+          clarificationOptions.appendChild(button);
+        });
+        clarificationPanel.style.display = 'block';
+        questionInput.value = '';
+        questionInput.focus();
+      }
+
+      function hideClarificationPrompt() {
+        clarificationPanel.style.display = 'none';
+        clarificationQuestionEl.textContent = '';
+        clarificationOptions.innerHTML = '';
       }
 
       function hideErrorPanel() {
@@ -453,24 +595,55 @@
         errorPanel.style.display = 'block';
       }
 
-      function renderResult(data) {
+      function renderResult(data, utterance) {
+        hideClarificationPrompt();
         currentData = data;  // Store current data
-        currentData.question = questionInput.value;  // Store the question too
+        currentData.question = utterance;
 
         resultCard.style.display = 'block';
         answerEl.textContent = data.answer;
         renderMetadata(data);
+        renderNqlStatus(data.nql_status || null);
         renderWarnings(data.warnings || []);
         sqlEl.textContent = data.sql;
         planEl.textContent = JSON.stringify(data.plan, null, 2);
         lineageEl.textContent = JSON.stringify(data.lineage, null, 2);
         renderTable(data.table);
         renderChart(data.chart);
-        renderFilterChips(data.plan);
+        renderPlanChips(data.chips);
         actionButtonsContainer.style.display = 'flex';
 
         // Add to history
-        addToHistory(questionInput.value);
+        addToHistory(utterance);
+        questionInput.value = '';
+      }
+
+      function renderNqlStatus(status) {
+        if (!status || status.valid) {
+          nqlStatusBanner.style.display = 'none';
+          nqlStatusBanner.textContent = '';
+          nqlStatusBanner.removeAttribute('title');
+          return;
+        }
+
+        let message;
+        if (status.attempted === false) {
+          const reason = status.reason || 'nql_not_attempted';
+          message = `NQL not used (${reason})`;
+        } else {
+          const stage = status.stage ? status.stage.toUpperCase() : 'UNKNOWN';
+          const reason = status.reason || 'error';
+          const fallback = status.fallback ? status.fallback.toUpperCase() : 'LEGACY';
+          message = `NQL fallback (${stage}): ${reason} → ${fallback}`;
+        }
+
+        nqlStatusBanner.textContent = message;
+        if (status.detail) {
+          nqlStatusBanner.title = status.detail;
+        } else {
+          nqlStatusBanner.removeAttribute('title');
+        }
+        nqlStatusBanner.style.display = 'block';
       }
 
       function renderWarnings(warnings) {
@@ -486,7 +659,9 @@
       function renderMetadata(data) {
         const badges = [];
         if (data.engine) {
-          badges.push(`<span><strong>Engine:</strong> ${data.engine}</span>`);
+          const engine = typeof data.engine === 'string' ? data.engine.toLowerCase() : '';
+          const engineLabel = engine === 'nql' ? 'NQL' : engine === 'legacy' ? 'Legacy' : data.engine;
+          badges.push(`<span><strong>Engine:</strong> ${engineLabel}</span>`);
         }
         const runtime = formatRuntime(data.runtime_ms);
         if (runtime) {
@@ -628,108 +803,48 @@
         }
       }
 
-      // ============ Filter Chips ============
-      function renderFilterChips(plan) {
-        if (!plan || !plan.filters || plan.filters.length === 0) {
+      // ============ Plan Chips ============
+      function renderPlanChips(chips) {
+        const groups = [
+          { label: 'Time', values: (chips && chips.time) || [] },
+          { label: 'Dimensions', values: (chips && chips.dimensions) || [] },
+          { label: 'Filters', values: (chips && chips.filters) || [] },
+        ];
+
+        const items = [];
+        groups.forEach(group => {
+          group.values.forEach(value => {
+            items.push({ label: group.label, value });
+          });
+        });
+
+        if (!items.length) {
           filterChipsContainer.style.display = 'none';
+          filterChipsContainer.innerHTML = '';
           return;
         }
 
         filterChipsContainer.innerHTML = '';
         filterChipsContainer.style.display = 'flex';
 
-        plan.filters.forEach((filter, index) => {
+        items.forEach(item => {
           const chip = document.createElement('div');
           chip.className = 'filter-chip';
-
-          const label = formatFilterLabel(filter);
-          const labelSpan = document.createElement('span');
-          labelSpan.textContent = label;
-
-          const removeBtn = document.createElement('button');
-          removeBtn.className = 'remove-btn';
-          removeBtn.textContent = '×';
-          removeBtn.title = 'Remove filter';
-          removeBtn.addEventListener('click', () => removeFilterAndRerun(index));
-
-          chip.appendChild(labelSpan);
-          chip.appendChild(removeBtn);
+          chip.textContent = `${item.label}: ${item.value}`;
           filterChipsContainer.appendChild(chip);
         });
       }
 
-      function formatFilterLabel(filter) {
-        const field = filter.field;
-        const op = filter.op;
-        const value = filter.value;
-
-        if (op === 'between' && Array.isArray(value)) {
-          return `${field}: ${value[0]} to ${value[1]}`;
-        } else if (op === 'in' && Array.isArray(value)) {
-          return `${field}: ${value.join(', ')}`;
-        } else if (op === 'like_any' && Array.isArray(value)) {
-          return `${field}: contains pattern`;
-        } else {
-          return `${field}: ${value}`;
-        }
-      }
-
-      function removeFilterAndRerun(filterIndex) {
-        if (!currentData || !currentData.plan) return;
-
-        // Create a new question by reconstructing from the plan without this filter
-        // Since we don't have perfect query reconstruction, we'll use a modified plan approach
-        const newFilters = currentData.plan.filters.filter((_, idx) => idx !== filterIndex);
-
-        // For simplicity, we'll construct a basic query from remaining filters
-        // In a production system, you'd want to store the original query structure
-        const baseQuery = reconstructQueryFromPlan(currentData.plan, newFilters);
-
-        questionInput.value = baseQuery;
-        submitQuestion(baseQuery);
-      }
-
-      function reconstructQueryFromPlan(plan, filters) {
-        // Basic query reconstruction - this is simplified
-        // In production, you'd want more sophisticated query building
-        let parts = [];
-
-        // Add metric
-        parts.push('Show incidents');
-
-        // Add grouping
-        if (plan.group_by && plan.group_by.length > 0) {
-          parts.push(`by ${plan.group_by.join(', ')}`);
-        }
-
-        // Add filters
-        filters.forEach(filter => {
-          if (filter.field === 'month') {
-            if (filter.op === 'between' && Array.isArray(filter.value)) {
-              parts.push(`from ${filter.value[0]} to ${filter.value[1]}`);
-            } else {
-              parts.push(`in ${filter.value}`);
-            }
-          } else if (filter.op === 'in' && Array.isArray(filter.value)) {
-            parts.push(`in ${filter.value.join(' or ')}`);
-          } else if (filter.op !== 'like_any') {
-            parts.push(`in ${filter.value}`);
-          }
-        });
-
-        return parts.join(' ');
-      }
-
       // ============ Copy/Download Buttons ============
-      copySqlBtn.addEventListener('click', () => {
+      copySqlBtn.addEventListener('click', event => {
         if (!currentData || !currentData.sql) return;
-        copyToClipboard(currentData.sql, 'SQL copied to clipboard!');
+        copyToClipboard(currentData.sql, event.currentTarget);
       });
 
-      copyJsonBtn.addEventListener('click', () => {
+      copyJsonBtn.addEventListener('click', event => {
         if (!currentData || !currentData.plan) return;
         const jsonStr = JSON.stringify(currentData.plan, null, 2);
-        copyToClipboard(jsonStr, 'JSON plan copied to clipboard!');
+        copyToClipboard(jsonStr, event.currentTarget);
       });
 
       downloadCsvBtn.addEventListener('click', () => {
@@ -737,14 +852,15 @@
         downloadAsCSV(currentData.table, 'scout-results.csv');
       });
 
-      function copyToClipboard(text, successMessage) {
+      function copyToClipboard(text, button) {
         navigator.clipboard.writeText(text).then(() => {
-          // Show temporary success message
-          const originalText = event.target.textContent;
-          event.target.textContent = '✓ Copied!';
-          setTimeout(() => {
-            event.target.textContent = originalText;
-          }, 2000);
+          if (button) {
+            const originalText = button.textContent;
+            button.textContent = '✓ Copied!';
+            setTimeout(() => {
+              button.textContent = originalText;
+            }, 2000);
+          }
         }).catch(err => {
           console.error('Failed to copy:', err);
           alert('Failed to copy to clipboard');

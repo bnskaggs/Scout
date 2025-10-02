@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
 from typing import Dict, List, Optional
@@ -25,12 +26,26 @@ PROMPT_PATH = pathlib.Path(__file__).parent / "llm_prompt_intent.txt"
 SEMANTIC_PATH = pathlib.Path(__file__).parents[1] / "config" / "semantic.yml"
 
 _LAST_ENGINE = "rule_based"
+_LAST_NQL_STATUS: Optional[Dict[str, object]] = None
 
 
 def get_last_intent_engine() -> str:
     """Return the planner engine used for the most recent plan."""
 
     return _LAST_ENGINE
+
+
+def get_last_nql_status() -> Optional[Dict[str, object]]:
+    """Return metadata about the last NQL attempt."""
+
+    if _LAST_NQL_STATUS is None:
+        return None
+    return deepcopy(_LAST_NQL_STATUS)
+
+
+def _slug_reason(message: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", message.lower()).strip("_")
+    return slug or "error"
 
 
 def list_columns_for_prompt() -> List[str]:
@@ -417,13 +432,15 @@ def build_plan_rule_based(question: str) -> Dict[str, object]:
         compare=compare,
         extras=extras or None,
     )
-    global _LAST_ENGINE
+    global _LAST_ENGINE, _LAST_NQL_STATUS
+    if _LAST_NQL_STATUS is None:
+        _LAST_NQL_STATUS = {"attempted": False}
     _LAST_ENGINE = "rule_based"
     return _post_process_plan(question, plan.to_dict(), bundle)
 
 
 def build_plan_llm(question: str) -> Dict[str, object]:
-    global _LAST_ENGINE
+    global _LAST_ENGINE, _LAST_NQL_STATUS
 
 
     prompt = fill_time_tokens(PROMPT_PATH.read_text(encoding="utf-8"))
@@ -444,11 +461,32 @@ def build_plan_llm(question: str) -> Dict[str, object]:
         try:
             compiled = compile_payload(payload)
         except NQLValidationError as exc:
+            _LAST_NQL_STATUS = {
+                "attempted": True,
+                "valid": False,
+                "stage": "validator",
+                "reason": _slug_reason(str(exc)),
+                "detail": str(exc),
+                "fallback": "legacy",
+            }
             raise RuntimeError(f"NQL validation failed: {exc}") from exc
+        except Exception as exc:  # pragma: no cover - defensive path
+            _LAST_NQL_STATUS = {
+                "attempted": True,
+                "valid": False,
+                "stage": "compiler",
+                "reason": _slug_reason(str(exc)),
+                "detail": str(exc),
+                "fallback": "legacy",
+            }
+            raise RuntimeError(f"NQL compilation failed: {exc}") from exc
+        else:
+            _LAST_NQL_STATUS = {"attempted": True, "valid": True}
         plan = compiled.plan
     else:
         if not isinstance(payload, dict):
             raise RuntimeError("LLM returned non-dict plan payload")
+        _LAST_NQL_STATUS = {"attempted": False}
         plan = payload
         try:
             assert isinstance(plan.get("metrics", []), list)
@@ -465,10 +503,15 @@ def build_plan_llm(question: str) -> Dict[str, object]:
 def build_plan(question: str, prefer_llm: bool = True) -> Dict[str, object]:
     """Primary planner entry point with LLM fallback."""
 
+    global _LAST_NQL_STATUS
+    _LAST_NQL_STATUS = None
     if not prefer_llm:
+        _LAST_NQL_STATUS = {"attempted": False}
         return build_plan_rule_based(question)
 
     try:
         return build_plan_llm(question)
     except (LLMNotConfigured, RuntimeError):
+        if _LAST_NQL_STATUS is None:
+            _LAST_NQL_STATUS = {"attempted": False}
         return build_plan_rule_based(question)
