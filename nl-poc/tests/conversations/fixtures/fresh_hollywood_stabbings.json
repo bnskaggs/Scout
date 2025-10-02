@@ -1,0 +1,139 @@
+{
+  "today": "2024-07-15",
+  "initial_nql": {
+    "nql_version": "0.1",
+    "intent": "aggregate",
+    "dataset": "la_crime",
+    "metrics": [
+      {
+        "name": "incidents",
+        "agg": "count",
+        "alias": "incidents"
+      }
+    ],
+    "time": {
+      "grain": "month",
+      "window": {
+        "type": "relative_months",
+        "start": null,
+        "end": "2024-07-01",
+        "exclusive_end": false,
+        "n": 6
+      },
+      "tz": "America/Chicago"
+    },
+    "dimensions": [
+      "area"
+    ],
+    "filters": [
+      {
+        "field": "month",
+        "op": "between",
+        "value": [
+          "2024-01-01",
+          "2024-07-01"
+        ],
+        "type": "date",
+        "notes": null
+      }
+    ],
+    "compare": null,
+    "group_by": [],
+    "sort": [],
+    "limit": 100,
+    "flags": {
+      "trend": null,
+      "strict_json": true,
+      "require_grouping_for_trend": true,
+      "like_passthrough": true,
+      "single_month_equals": true,
+      "quarter_exclusive_end": true,
+      "rowcap_hint": 10000
+    },
+    "provenance": {
+      "utterance": null,
+      "retrieval_notes": [],
+      "confidence": null,
+      "critic_pass": []
+    }
+  },
+  "turns": [
+    {
+      "utterance": "How many stabbings happened in Hollywood?",
+      "expected": {
+        "nql_version": "0.1",
+        "intent": "aggregate",
+        "dataset": "la_crime",
+        "metrics": [
+          {
+            "name": "incident_count",
+            "agg": "count",
+            "alias": "count"
+          }
+        ],
+        "time": {
+          "grain": "month",
+          "window": {
+            "type": "relative_months",
+            "start": null,
+            "end": "2024-07-01",
+            "exclusive_end": false,
+            "n": 12
+          },
+          "tz": "America/Chicago"
+        },
+        "dimensions": [],
+        "filters": [
+          {
+            "field": "month",
+            "op": "between",
+            "value": [
+              "2023-07-01",
+              "2024-07-01"
+            ],
+            "type": "date",
+            "notes": null
+          },
+          {
+            "field": "area",
+            "op": "=",
+            "value": "Hollywood",
+            "type": "category",
+            "notes": null
+          },
+          {
+            "field": "weapon",
+            "op": "like_any",
+            "value": [
+              "%knife%",
+              "%stab%"
+            ],
+            "type": "text_raw",
+            "notes": null
+          }
+        ],
+        "compare": null,
+        "group_by": [],
+        "sort": [],
+        "limit": 100,
+        "flags": {
+          "trend": null,
+          "strict_json": true,
+          "require_grouping_for_trend": true,
+          "like_passthrough": true,
+          "single_month_equals": true,
+          "quarter_exclusive_end": true,
+          "rowcap_hint": 10000
+        },
+        "provenance": {
+          "utterance": "How many stabbings happened in Hollywood?",
+          "retrieval_notes": [
+            "topic_shift:starts_with_how_many+question_no_anaphora+new_entity_preposition -> reset dims/group_by"
+          ],
+          "confidence": null,
+          "critic_pass": []
+        }
+      }
+    }
+  ]
+}

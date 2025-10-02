@@ -8,7 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import re
 from copy import deepcopy
 
-from .nql.model import CompareInternalWindow, CompareSpec, Filter, NQLQuery
+from .planner import build_plan_rule_based
+from .synonyms import detect_weapon_patterns
+from .time_utils import extract_time_range
+from .nql.model import CompareInternalWindow, CompareSpec, Filter, Metric, NQLQuery
 
 
 # Dimension canonical names that map to the semantic model.
@@ -199,7 +202,11 @@ def _toggle_mom_compare(nql: NQLQuery, enabled: bool) -> None:
 
 
 def rewrite_followup(
-    conversation_state: Dict[str, Any], utterance: str, *, today: Optional[date] = None
+    conversation_state: Dict[str, Any],
+    utterance: str,
+    *,
+    today: Optional[date] = None,
+    force_fresh: bool = False,
 ) -> Dict[str, Any]:
     """Merge a follow-up utterance into the prior NQL conversation state."""
 
@@ -207,6 +214,18 @@ def rewrite_followup(
         raise ValueError("conversation_state cannot be empty for follow-up rewrites")
 
     today = today or date.today()
+    classification = _classify_topic_shift(
+        conversation_state, utterance, force_fresh=force_fresh
+    )
+    if classification["is_fresh_query"]:
+        fresh = _build_fresh_query(
+            conversation_state,
+            utterance,
+            today=today,
+            reasons=classification["reasons"],
+        )
+        return fresh.dict()
+
     working = NQLQuery.parse_obj(deepcopy(conversation_state))
     working.provenance.utterance = utterance
 
@@ -220,7 +239,7 @@ def rewrite_followup(
             working.dimensions = [resolved]
             # REPLACE group_by with the new dimension (keep month if it was there for trends)
             has_month = "month" in working.group_by
-            working.group_by = ["month", resolved] if has_month else [resolved]
+            working.group_by = ["month"] if has_month else []
 
     # Detect filter removals like "filter out Central"
     remove_match = re.search(
@@ -448,3 +467,263 @@ __all__ = [
     "_is_self_contained_query",
 ]
 
+_ANAPHORA_TOKENS = {
+    "same",
+    "now",
+    "also",
+    "that",
+    "previous",
+    "again",
+    "include",
+    "remove",
+}
+
+_QUESTION_STARTERS = (
+    "how",
+    "what",
+    "where",
+    "which",
+    "who",
+    "when",
+    "count",
+    "do",
+    "does",
+    "is",
+    "are",
+)
+
+_COUNT_PREFIXES = (
+    "how many",
+    "count",
+    "what is the total",
+)
+
+_METRIC_KEYWORDS = {
+    "incident",
+    "incidents",
+    "crime",
+    "crimes",
+    "case",
+    "cases",
+    "event",
+    "events",
+    "report",
+    "reports",
+    "total",
+    "number",
+    "robbery",
+    "robberies",
+    "stabbing",
+    "stabbings",
+    "shooting",
+    "shootings",
+    "assault",
+    "assaults",
+}
+
+_SUBJECT_VALUE_KEYWORDS = {
+    "robbery": ("crime_type", "Robbery"),
+    "robberies": ("crime_type", "Robbery"),
+    "assault": ("crime_type", "Assault"),
+    "assaults": ("crime_type", "Assault"),
+    "burglary": ("crime_type", "Burglary"),
+    "burglaries": ("crime_type", "Burglary"),
+}
+
+
+def _looks_like_question(text: str) -> bool:
+    stripped = text.strip().lower()
+    if not stripped:
+        return False
+    if stripped.endswith("?"):
+        return True
+    return any(stripped.startswith(prefix) for prefix in _QUESTION_STARTERS)
+
+
+def _starts_with_count_phrase(text: str) -> Optional[str]:
+    for phrase in _COUNT_PREFIXES:
+        if text.startswith(phrase):
+            return phrase
+    return None
+
+
+def _classify_topic_shift(
+    conversation_state: Dict[str, Any],
+    utterance: str,
+    *,
+    force_fresh: bool = False,
+) -> Dict[str, Any]:
+    lowered = utterance.strip().lower()
+    reasons: List[str] = []
+
+    if force_fresh:
+        return {"is_fresh_query": True, "reasons": ["forced_context_off"]}
+
+    if not lowered:
+        return {"is_fresh_query": False, "reasons": []}
+
+    count_prefix = _starts_with_count_phrase(lowered)
+    if count_prefix:
+        reasons.append(f"starts_with_{count_prefix.replace(' ', '_')}")
+
+    looks_like_question = _looks_like_question(lowered)
+    contains_anaphora = any(token in lowered for token in _ANAPHORA_TOKENS)
+    has_metric_keyword = any(keyword in lowered for keyword in _METRIC_KEYWORDS)
+    if looks_like_question and not contains_anaphora and has_metric_keyword:
+        reasons.append("question_no_anaphora")
+
+    if looks_like_question and " by " not in lowered:
+        if re.search(r"\b(?:in|for|at|within|across)\s+[a-z]", lowered):
+            reasons.append("new_entity_preposition")
+
+    return {"is_fresh_query": bool(reasons), "reasons": reasons}
+
+
+def _infer_subject_filters(
+    utterance: str,
+    existing_fields: List[str],
+) -> List[Filter]:
+    lowered = utterance.lower()
+    filters: List[Filter] = []
+    seen_fields = set(existing_fields)
+
+    for keyword, (field, value) in _SUBJECT_VALUE_KEYWORDS.items():
+        if re.search(rf"\b{re.escape(keyword)}\b", lowered) and field not in seen_fields:
+            filters.append(
+                Filter(
+                    field=field,
+                    op="=",
+                    value=value,
+                    type=_DIMENSION_TYPES.get(field, "category"),
+                )
+            )
+            seen_fields.add(field)
+
+    weapon_patterns = detect_weapon_patterns(utterance)
+    if weapon_patterns and "weapon" not in seen_fields:
+        normalised = [pattern.lower() for pattern in weapon_patterns]
+        filters.append(
+            Filter(field="weapon", op="like_any", value=normalised, type="text_raw")
+        )
+        seen_fields.add("weapon")
+
+    return filters
+
+
+def _reset_time_for_fresh_query(
+    nql: NQLQuery,
+    *,
+    utterance: str,
+    conversation_state: Dict[str, Any],
+    today: Optional[date],
+) -> None:
+    anchor_end = (
+        conversation_state.get("time", {})
+        .get("window", {})
+        .get("end")
+    )
+
+    time_range = extract_time_range(utterance, today=today)
+    if time_range:
+        if time_range.op == "=":
+            _set_single_month_window(nql, time_range.start)
+        else:
+            window = nql.time.window
+            window.type = "absolute"
+            window.start = time_range.start.isoformat()
+            window.end = time_range.end.isoformat()
+            window.exclusive_end = False
+            window.n = None
+            _replace_month_filter(
+                nql,
+                "between",
+                [time_range.start.isoformat(), time_range.end.isoformat()],
+            )
+        return
+
+    if not anchor_end and today:
+        anchor_end = date(today.year, today.month, 1).isoformat()
+
+    _set_relative_months_window(nql, 12, anchor_end)
+
+
+def _build_filters_from_plan(plan_filters: List[Dict[str, Any]]) -> List[Filter]:
+    built: List[Filter] = []
+    for entry in plan_filters:
+        field = entry.get("field")
+        if not field or field == "month":
+            continue
+        op = entry.get("op", "=")
+        value = entry.get("value")
+        if field == "weapon" and op in {"like", "ilike", "like_any"}:
+            if isinstance(value, list):
+                normalised_value = [str(item).lower() for item in value]
+            else:
+                normalised_value = str(value).lower()
+            built.append(
+                Filter(
+                    field="weapon",
+                    op=op,
+                    value=normalised_value,
+                    type="text_raw",
+                )
+            )
+            continue
+        filt_type = _DIMENSION_TYPES.get(field, "category")
+        built.append(Filter(field=field, op=op, value=value, type=filt_type))
+    return built
+
+
+def _build_fresh_query(
+    conversation_state: Dict[str, Any],
+    utterance: str,
+    *,
+    today: Optional[date],
+    reasons: List[str],
+) -> NQLQuery:
+    base = NQLQuery.parse_obj(deepcopy(conversation_state))
+    base.intent = "aggregate"
+    base.dimensions = []
+    base.group_by = []
+    base.compare = None
+    base.sort = []
+    base.filters = []
+    if base.flags:
+        base.flags.trend = None
+
+    plan = build_plan_rule_based(utterance)
+    group_by = [dim for dim in plan.get("group_by", []) if isinstance(dim, str)]
+    includes_grouping = bool(group_by)
+    if includes_grouping:
+        base.group_by = [dim for dim in group_by if dim != "month"]
+
+    count_prefix = _starts_with_count_phrase(utterance.lower().strip())
+    if count_prefix:
+        base.metrics = [Metric(name="incident_count", agg="count", alias="count")]
+    else:
+        base.metrics = [metric.copy(deep=True) for metric in base.metrics]
+
+    _reset_time_for_fresh_query(
+        base,
+        utterance=utterance,
+        conversation_state=conversation_state,
+        today=today,
+    )
+
+    filters_from_plan = _build_filters_from_plan(plan.get("filters", []))
+    existing_fields = [f.field for f in filters_from_plan]
+    subject_filters = _infer_subject_filters(utterance, existing_fields)
+    base.filters.extend(filters_from_plan)
+    for filt in subject_filters:
+        if filt.field not in {f.field for f in base.filters if f.field != "month"}:
+            base.filters.append(filt)
+
+    base.provenance.retrieval_notes = []
+    reason_slug = "+".join(reasons) if reasons else "manual"
+    note = f"topic_shift:{reason_slug}"
+    if count_prefix and " by " not in utterance.lower():
+        note = f"{note} -> reset dims/group_by"
+    base.provenance.retrieval_notes.append(note)
+
+    base.provenance.utterance = utterance
+    return base
