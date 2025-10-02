@@ -19,7 +19,7 @@ from .synonyms import (
     load_synonyms,
     weapon_patterns_from_value,
 )
-from .nql import NQLValidationError, compile_payload, is_enabled as nql_is_enabled
+from .nql import NQLValidationError, compile_payload, use_nql_enabled
 from .time_utils import TimeRange, extract_time_range, trailing_year_range
 
 PROMPT_PATH = pathlib.Path(__file__).parent / "llm_prompt_intent.txt"
@@ -457,7 +457,7 @@ def build_plan_llm(question: str) -> Dict[str, object]:
         raise RuntimeError(f"LLM returned non-JSON payload: {raw[:200]}...") from exc
 
     bundle = load_synonyms()
-    if nql_is_enabled() and isinstance(payload, dict) and payload.get("nql_version"):
+    if use_nql_enabled() and isinstance(payload, dict) and payload.get("nql_version"):
         try:
             compiled = compile_payload(payload)
         except NQLValidationError as exc:
