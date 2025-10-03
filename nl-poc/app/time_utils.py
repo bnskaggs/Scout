@@ -265,7 +265,7 @@ def parse_year(text: str) -> Optional[TimeRange]:
                 today = current_date()
                 end = _next_month(date(end_year, min(today.month, 12), 1))
             else:
-                end = date(end_year, 12, 31)
+                end = date(end_year + 1, 1, 1)
 
             label = f"{start_year}-{end_year}" if not ytd_after else f"{start_year} vs {end_year} YTD"
             return TimeRange(start=start, end=end, label=label)
@@ -273,7 +273,7 @@ def parse_year(text: str) -> Optional[TimeRange]:
     # prefer the last occurrence to capture more specific context like "in 2023"
     year = int(matches[-1].group(1))
     start = date(year, 1, 1)
-    end = date(year, 12, 31)
+    end = date(year + 1, 1, 1)
     return TimeRange(start=start, end=end, label=str(year))
 
 

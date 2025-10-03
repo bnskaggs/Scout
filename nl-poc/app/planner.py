@@ -71,6 +71,7 @@ class Plan:
     limit: int
     compare: Optional[Dict[str, object]] = None
     extras: Optional[Dict[str, object]] = None
+    aggregate: Optional[str] = None
 
     def to_dict(self) -> Dict[str, object]:
         data: Dict[str, object] = {
@@ -84,6 +85,8 @@ class Plan:
             data["compare"] = self.compare
         if self.extras:
             data["extras"] = self.extras
+        if self.aggregate:
+            data["aggregate"] = self.aggregate
         return data
 
 
@@ -92,6 +95,7 @@ _TOP_N_PATTERN = re.compile(r"top\s+(\d+)", re.IGNORECASE)
 _BOT_N_PATTERN = re.compile(r"bottom\s+(\d+)", re.IGNORECASE)
 _LIMIT_PATTERN = re.compile(r"limit\s+(\d+)", re.IGNORECASE)
 _IN_LIST_PATTERN = re.compile(r"\b([\w .&/-]+)\s+vs\.?\s+([\w .&/-]+)\b", re.IGNORECASE)
+_COMPARE_VS_PATTERN = re.compile(r"^compare\s+(?P<lhs>.+?)\s+(?:vs\.?|versus)\s+(?P<rhs>.+)$", re.IGNORECASE)
 
 
 def _extract_tokens(text: str) -> List[str]:
@@ -405,23 +409,43 @@ def build_plan_rule_based(question: str) -> Dict[str, object]:
     bundle = load_synonyms()
     time_range = extract_time_range(question)
     metrics = ["incidents"]
+    aggregate: Optional[str] = None
 
     group_by = _detect_group_by(question, bundle)
     filters = _detect_filters(question, bundle, time_range)
     order_by = _detect_order(question)
     limit = _detect_limit(question)
     extras: Dict[str, object] = {}
+    diagnostics: List[Dict[str, object]] = []
 
     text_lower = question.lower()
+    count_triggers = ("how many", "number of")
+    count_explicit = bool(re.search(r"\bcount\b", text_lower))
+    if any(trigger in text_lower for trigger in count_triggers) or count_explicit:
+        aggregate = "count"
+        metric_alias_present = any(token in text_lower for token in bundle.metric_aliases)
+        if not metric_alias_present:
+            metrics = ["count"]
     if any(token in text_lower for token in SHARE_TOKENS):
         extras["share_city"] = True
         if not order_by:
             order_by = [{"field": "incidents", "dir": "desc"}]
 
-    compare_keyword = detect_compare(question, bundle)
     compare = None
-    if compare_keyword:
-        compare = {"type": compare_keyword, "periods": 1}
+    compare_vs = _detect_compare_vs(question, bundle)
+    if compare_vs:
+        diag = compare_vs.pop("diagnostic", None)
+        if diag:
+            diagnostics.append({"type": diag})
+        if compare_vs:
+            compare = compare_vs
+    if compare is None:
+        compare_keyword = detect_compare(question, bundle)
+        if compare_keyword:
+            compare = {"type": compare_keyword, "periods": 1}
+
+    if diagnostics:
+        extras["diagnostics"] = diagnostics
 
     plan = Plan(
         metrics=metrics,
@@ -430,6 +454,7 @@ def build_plan_rule_based(question: str) -> Dict[str, object]:
         order_by=order_by,
         limit=limit,
         compare=compare,
+        aggregate=aggregate,
         extras=extras or None,
     )
     global _LAST_ENGINE, _LAST_NQL_STATUS
@@ -515,3 +540,75 @@ def build_plan(question: str, prefer_llm: bool = True) -> Dict[str, object]:
         if _LAST_NQL_STATUS is None:
             _LAST_NQL_STATUS = {"attempted": False}
         return build_plan_rule_based(question)
+def _next_month_start(value: date) -> date:
+    month = value.month + 1
+    year = value.year
+    if month > 12:
+        month = 1
+        year += 1
+    return date(year, month, 1)
+
+
+def _time_range_to_interval(time_range: TimeRange) -> str:
+    start = time_range.start
+    if time_range.op == "=":
+        end = _next_month_start(start)
+    else:
+        end = time_range.end
+    return f"{start.isoformat()}/{end.isoformat()}"
+
+
+def _strip_time_tokens(text: str) -> str:
+    cleaned = re.sub(r"\b20\d{2}\b", "", text)
+    cleaned = re.sub(r"\bq[1-4]\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bq[1-4]\s*20\d{2}\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:last|this|next)\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:in|for|by|vs|versus|and|compare)\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def _looks_like_dimension_segment(text: str) -> bool:
+    cleaned = _strip_time_tokens(text)
+    if not cleaned:
+        return False
+    if re.search(r"\d", cleaned):
+        return False
+    return True
+
+
+def _detect_compare_vs(question: str, bundle: SynonymBundle) -> Dict[str, object] | None:
+    match = _COMPARE_VS_PATTERN.search(question.strip())
+    if not match:
+        return None
+    lhs = match.group("lhs").strip()
+    rhs = match.group("rhs").strip()
+    lhs_time = extract_time_range(lhs)
+    rhs_time = extract_time_range(rhs)
+    if lhs_time and rhs_time:
+        return {
+            "mode": "time",
+            "lhs_time": _time_range_to_interval(lhs_time),
+            "rhs_time": _time_range_to_interval(rhs_time),
+        }
+
+    lhs_dimension = _looks_like_dimension_segment(lhs)
+    rhs_dimension = _looks_like_dimension_segment(rhs)
+    if lhs_dimension and rhs_dimension:
+        dimension = "area"
+        for phrase, canonical in bundle.dimension_aliases.items():
+            if canonical == "month":
+                continue
+            if phrase in question.lower():
+                dimension = canonical
+                break
+        result: Dict[str, object] = {"mode": "dimension", "dimension": dimension}
+        if lhs_time or rhs_time:
+            result["diagnostic"] = "ambiguous_compare"
+        return result
+
+    if (lhs_time and not rhs_time) or (rhs_time and not lhs_time):
+        return {"diagnostic": "ambiguous_compare"}
+
+    return None

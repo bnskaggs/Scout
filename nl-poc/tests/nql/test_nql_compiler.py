@@ -157,3 +157,79 @@ def test_strict_json_rejects_unknown_fields():
     payload = _load_fixture("strict_json_invalid_field.json")
     with pytest.raises(NQLValidationError):
         compile_payload(payload)
+
+
+def test_compile_preserves_aggregate_field():
+    payload = _load_fixture("single_month.json")
+    payload["aggregate"] = "count"
+    compiled = compile_payload(payload)
+    assert compiled.plan.get("aggregate") == "count"
+
+
+def test_compile_compare_time_mode():
+    payload = {
+        "nql_version": "0.1",
+        "intent": "compare",
+        "dataset": "la_crime",
+        "metrics": [
+            {"name": "incidents", "agg": "count", "alias": "incidents"}
+        ],
+        "aggregate": "count",
+        "dimensions": [],
+        "filters": [],
+        "time": {
+            "grain": "month",
+            "window": {
+                "type": "absolute",
+                "start": "2023-01-01",
+                "end": "2025-01-01"
+            },
+        },
+        "group_by": [],
+        "sort": [],
+        "limit": 100,
+        "compare": {
+            "mode": "time",
+            "lhs_time": "2023-01-01/2024-01-01",
+            "rhs_time": "2024-01-01/2025-01-01",
+        },
+    }
+    compiled = compile_payload(payload)
+    compare = compiled.plan.get("compare")
+    assert compare is not None
+    assert compare.get("mode") == "time"
+    assert compare.get("lhs_time") == "2023-01-01/2024-01-01"
+    assert compare.get("rhs_time") == "2024-01-01/2025-01-01"
+
+
+def test_compile_compare_dimension_mode():
+    payload = {
+        "nql_version": "0.1",
+        "intent": "compare",
+        "dataset": "la_crime",
+        "metrics": [
+            {"name": "incidents", "agg": "count", "alias": "incidents"}
+        ],
+        "dimensions": [],
+        "filters": [],
+        "time": {
+            "grain": "month",
+            "window": {
+                "type": "absolute",
+                "start": "2024-01-01",
+                "end": "2025-01-01"
+            },
+        },
+        "group_by": [],
+        "sort": [],
+        "limit": 100,
+        "compare": {
+            "mode": "dimension",
+            "dimension": "area",
+        },
+    }
+    compiled = compile_payload(payload)
+    compare = compiled.plan.get("compare")
+    assert compare is not None
+    assert compare.get("mode") == "dimension"
+    assert compare.get("dimension") == "area"

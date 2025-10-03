@@ -7,6 +7,22 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.viz import build_narrative
 
 
+def test_header_uses_current_group_by_dimension():
+    plan = {
+        "metrics": ["incidents"],
+        "group_by": ["premise"],
+        "order_by": [{"field": "incidents", "dir": "desc"}],
+    }
+    records = [
+        {"premise": "RESIDENCE", "incidents": 5},
+        {"premise": "RESTAURANT", "incidents": 3},
+    ]
+
+    narrative = build_narrative(plan, records)
+
+    assert "RESIDENCE led with 5 incidents" in narrative
+
+
 def test_bottom_query_uses_fewest():
     """Test that bottom queries use 'had the fewest' instead of 'led with'."""
 

@@ -48,10 +48,41 @@ def build_narrative(plan: Dict[str, object], records: List[Dict[str, object]]) -
         top = records[0]
 
     parts = []
-    if plan.get("group_by"):
-        first_dim = plan["group_by"][0]
-        label = top.get(first_dim, "Unknown")
-        value = top.get(metric)
+    group_by = plan.get("group_by") or []
+    if group_by:
+        metric_candidates = plan.get("metrics") or []
+        metric_alias = metric_candidates[0] if metric_candidates else metric
+
+        label = "Unknown"
+        resolved_dim = None
+        for dim in group_by:
+            if isinstance(dim, dict):
+                dim_keys = [
+                    dim.get("alias"),
+                    dim.get("field"),
+                    dim.get("expr"),
+                ]
+            else:
+                dim_keys = [dim]
+            resolved_dim = next((key for key in dim_keys if key and key in top), None)
+            if resolved_dim:
+                label = top.get(resolved_dim, "Unknown")
+                break
+        if not resolved_dim:
+            resolved_dim = next(
+                (
+                    key
+                    for key in top.keys()
+                    if key not in metric_candidates and key not in {metric, "change_pct"}
+                ),
+                None,
+            )
+            if resolved_dim:
+                label = top.get(resolved_dim, "Unknown")
+
+        value = top.get(metric_alias if metric_alias in top else metric)
+        if value is None:
+            value = top.get(metric)
 
         # Check if this is a "bottom/lowest" query (ascending sort order)
         order_by = plan.get("order_by", [])
@@ -65,8 +96,12 @@ def build_narrative(plan: Dict[str, object], records: List[Dict[str, object]]) -
         else:
             parts.append(f"{label} led with {value} incidents")
     else:
+        metric_name = metric.replace("_", " ")
         value = top.get(metric)
-        parts.append(f"There were {value} incidents")
+        if value is None and plan.get("metrics"):
+            fallback_metric = plan["metrics"][0]
+            value = top.get(fallback_metric)
+        parts.append(f"Total {metric_name} was {value}")
 
     if compare and "change_pct" in top and top["change_pct"] is not None:
         direction = "up" if top["change_pct"] > 0 else "down"

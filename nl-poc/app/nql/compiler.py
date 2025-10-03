@@ -91,13 +91,28 @@ def _compile_sort(nql: NQLQuery) -> List[Dict[str, str]]:
 def _compile_compare(nql: NQLQuery) -> Optional[Dict[str, Any]]:
     if not nql.compare:
         return None
-    periods = 1
-    if nql.compare.type == "yoy":
-        periods = 12
-    compare = {"type": nql.compare.type, "periods": periods}
-    if nql.compare.baseline:
-        compare["baseline"] = nql.compare.baseline
-    return compare
+    compare_model = nql.compare
+    compare: Dict[str, Any] = {}
+    if compare_model.mode:
+        compare["mode"] = compare_model.mode
+        if compare_model.mode == "time":
+            if compare_model.lhs_time:
+                compare["lhs_time"] = compare_model.lhs_time
+            if compare_model.rhs_time:
+                compare["rhs_time"] = compare_model.rhs_time
+        if compare_model.mode == "dimension" and compare_model.dimension:
+            compare["dimension"] = compare_model.dimension
+    if compare_model.type:
+        periods = 1
+        if compare_model.type == "yoy":
+            periods = 12
+        compare["type"] = compare_model.type
+        compare["periods"] = periods
+    if compare_model.baseline:
+        compare["baseline"] = compare_model.baseline
+    if compare_model.internal_window:
+        compare["internal_window"] = compare_model.internal_window.dict()
+    return compare or None
 
 
 def compile_nql_query(nql: NQLQuery, today: Optional[date] = None) -> Dict[str, Any]:
@@ -110,6 +125,8 @@ def compile_nql_query(nql: NQLQuery, today: Optional[date] = None) -> Dict[str, 
         "order_by": _compile_sort(nql),
         "limit": nql.limit,
     }
+    if nql.aggregate:
+        plan["aggregate"] = nql.aggregate
     compare = _compile_compare(nql)
     if compare:
         plan["compare"] = compare
