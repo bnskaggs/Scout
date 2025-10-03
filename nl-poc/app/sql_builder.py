@@ -81,7 +81,12 @@ def _build_filters(filters: List[Dict[str, object]], semantic: SemanticModel, al
 
 
 def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
-    metrics = plan.get("metrics", []) or ["incidents"]
+    aggregate = plan.get("aggregate")
+    metrics = plan.get("metrics", []) or []
+    if not metrics and aggregate == "count":
+        metrics = ["count"]
+    if not metrics:
+        metrics = ["incidents"]
     group_by = plan.get("group_by", [])
     filters = plan.get("filters", [])
     order_by = plan.get("order_by") or []
@@ -107,8 +112,17 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
 
     metric_exprs: List[str] = []
     for metric in metrics:
+        if metric == "count":
+            metric_exprs.append("COUNT(*) AS count")
+            continue
+        if metric == "*":
+            metric_exprs.append("COUNT(*) AS count")
+            continue
         metric_obj = semantic.metrics[metric]
-        metric_exprs.append(f"{metric_obj.sql_expression()} AS {metric}")
+        if aggregate == "count":
+            metric_exprs.append(f"COUNT(*) AS {metric}")
+        else:
+            metric_exprs.append(f"{metric_obj.sql_expression()} AS {metric}")
 
     if not metric_exprs:
         metric_exprs.append("COUNT(*) AS incidents")

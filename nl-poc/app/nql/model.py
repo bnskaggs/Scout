@@ -119,6 +119,7 @@ FilterType = Literal["text", "text_raw", "number", "date", "category"]
 TimeGrain = Literal["day", "week", "month", "quarter", "year"]
 WindowType = Literal["single_month", "absolute", "quarter", "relative_months", "ytd"]
 CompareType = Literal["mom", "yoy", "wow", "dod"]
+CompareMode = Literal["time", "dimension", "metric"]
 CompareBaseline = Literal["previous_period", "same_period_last_year"]
 SortDirection = Literal["asc", "desc"]
 
@@ -171,9 +172,13 @@ class CompareInternalWindow(BaseModel):
 
 
 class CompareSpec(BaseModel):
-    type: CompareType
+    type: Optional[CompareType] = None
     baseline: Optional[CompareBaseline] = None
     internal_window: Optional[CompareInternalWindow] = None
+    mode: Optional[CompareMode] = None
+    lhs_time: Optional[str] = None
+    rhs_time: Optional[str] = None
+    dimension: Optional[str] = None
 
     class Config:
         extra = "forbid"
@@ -215,6 +220,7 @@ class NQLQuery(BaseModel):
     intent: IntentType
     dataset: str
     metrics: List[Metric]
+    aggregate: Optional[MetricAgg] = None
     time: TimeSpec
     dimensions: List[str] = Field(default_factory=list)
     filters: List[Filter] = Field(default_factory=list)

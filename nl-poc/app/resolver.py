@@ -125,8 +125,37 @@ class PlanResolver:
         return resolved_values if isinstance(value, list) else resolved_values[0]
 
     def resolve(self, plan: Dict[str, object]) -> Dict[str, object]:
-        for metric in plan.get("metrics", []):
+        raw_metrics = plan.get("metrics", []) or []
+        aggregate_value = plan.get("aggregate")
+        diagnostics: List[Dict[str, object]] = []
+
+        resolved_metrics: List[str] = []
+        fallback_count_requested = False
+        for metric in raw_metrics:
+            if metric in self.semantic.metrics:
+                resolved_metrics.append(metric)
+                continue
+            if metric in {"count", "*"}:
+                fallback_count_requested = True
+                continue
             self._validate_metric(metric)
+
+        if fallback_count_requested:
+            aggregate_value = aggregate_value or "count"
+            if not resolved_metrics:
+                resolved_metrics.append("count")
+                diagnostics.append(
+                    {
+                        "type": "unknown_metric_fallback",
+                        "message": "Using row count for 'count' intent",
+                    }
+                )
+
+        if not resolved_metrics and not fallback_count_requested:
+            for metric in raw_metrics:
+                self._validate_metric(metric)
+
+        metrics = resolved_metrics or raw_metrics
         for dimension in plan.get("group_by", []):
             self._validate_dimension(dimension)
         filters: List[Dict[str, object]] = []
@@ -175,12 +204,16 @@ class PlanResolver:
             limit = min(int(limit_value), 2000)
         compare = plan.get("compare")
         resolved_plan = {
-            "metrics": plan.get("metrics", []),
+            "metrics": metrics,
             "group_by": plan.get("group_by", []),
             "filters": filters,
             "order_by": order_by,
             "limit": limit,
         }
+        if aggregate_value:
+            resolved_plan["aggregate"] = aggregate_value
+        if diagnostics:
+            resolved_plan["diagnostics"] = diagnostics
         if compare:
             resolved_plan["compare"] = compare
             if compare.get("type") == "mom" and time_range and time_range.start == time_range.end:
