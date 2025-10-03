@@ -134,6 +134,83 @@
           "critic_pass": []
         }
       }
+    },
+    {
+      "utterance": "Okay now limit it to 2024",
+      "expected": {
+        "nql_version": "0.1",
+        "intent": "aggregate",
+        "dataset": "la_crime",
+        "metrics": [
+          {
+            "name": "incident_count",
+            "agg": "count",
+            "alias": "count"
+          }
+        ],
+        "time": {
+          "grain": "month",
+          "window": {
+            "type": "absolute",
+            "start": "2024-01-01",
+            "end": "2024-12-31",
+            "exclusive_end": false,
+            "n": null
+          },
+          "tz": "America/Chicago"
+        },
+        "dimensions": [],
+        "filters": [
+          {
+            "field": "month",
+            "op": "between",
+            "value": [
+              "2024-01-01",
+              "2024-12-31"
+            ],
+            "type": "date",
+            "notes": null
+          },
+          {
+            "field": "area",
+            "op": "=",
+            "value": "Hollywood",
+            "type": "category",
+            "notes": null
+          },
+          {
+            "field": "weapon",
+            "op": "like_any",
+            "value": [
+              "%knife%",
+              "%stab%"
+            ],
+            "type": "text_raw",
+            "notes": null
+          }
+        ],
+        "compare": null,
+        "group_by": [],
+        "sort": [],
+        "limit": 100,
+        "flags": {
+          "trend": null,
+          "strict_json": true,
+          "require_grouping_for_trend": true,
+          "like_passthrough": true,
+          "single_month_equals": true,
+          "quarter_exclusive_end": true,
+          "rowcap_hint": 10000
+        },
+        "provenance": {
+          "utterance": "Okay now limit it to 2024",
+          "retrieval_notes": [
+            "topic_shift:starts_with_how_many+question_no_anaphora+new_entity_preposition -> reset dims/group_by"
+          ],
+          "confidence": null,
+          "critic_pass": []
+        }
+      }
     }
   ]
 }

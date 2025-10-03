@@ -288,32 +288,57 @@ def rewrite_followup(
         )
 
     # Time adjustments
+    anchor_end = working.time.window.end
+    time_adjusted = False
     if "last quarter" in lowered:
         start, end_exclusive = _previous_quarter(today)
         _set_quarter_window(working, start, end_exclusive)
+        time_adjusted = True
     else:
         match_relative = re.search(r"last\s+(\d{1,2})\s+months", lowered)
         if match_relative:
             n = int(match_relative.group(1))
-            anchor_end = working.time.window.end
             _set_relative_months_window(working, n, anchor_end)
+            time_adjusted = True
         elif "last 6 months" in lowered:
-            anchor_end = working.time.window.end
             _set_relative_months_window(working, 6, anchor_end)
+            time_adjusted = True
         elif "last 12 months" in lowered or "last year" in lowered:
-            anchor_end = working.time.window.end
             _set_relative_months_window(working, 12, anchor_end)
+            time_adjusted = True
         elif "past 6 months" in lowered or "past six months" in lowered:
-            anchor_end = working.time.window.end
             _set_relative_months_window(working, 6, anchor_end)
+            time_adjusted = True
         elif "last month" in lowered:
-            anchor_end = working.time.window.end
             if anchor_end:
                 end_date = date.fromisoformat(anchor_end)
             else:
                 end_date = today
             start = _previous_month(end_date)
             _set_single_month_window(working, start)
+            time_adjusted = True
+
+    if not time_adjusted:
+        time_range = extract_time_range(utterance, today=today)
+        if time_range:
+            if time_range.op == "=":
+                _set_single_month_window(working, time_range.start)
+            else:
+                window = working.time.window
+                window.type = "absolute"
+                window.start = time_range.start.isoformat()
+                window.end = time_range.end.isoformat()
+                window.exclusive_end = False
+                window.n = None
+                _replace_month_filter(
+                    working,
+                    "between",
+                    [
+                        time_range.start.isoformat(),
+                        time_range.end.isoformat(),
+                    ],
+                )
+            time_adjusted = True
 
     if "trend" in lowered:
         working.intent = "trend"
