@@ -8,8 +8,9 @@ from typing import Dict, List, Optional
 
 import yaml
 
-from .executor import DuckDBExecutor
-from .time_utils import TimeRange, describe_time_range
+from ..executor import DuckDBExecutor
+from ..time_utils import TimeRange, describe_time_range
+from .canonicalizer import Canonicalizer, CanonicalResolution
 
 
 @dataclass
@@ -80,9 +81,17 @@ class PlanResolutionError(Exception):
 class PlanResolver:
     _PATTERN_OPERATORS = {"like", "not like", "like_any", "contains"}
 
-    def __init__(self, semantic: SemanticModel, executor: DuckDBExecutor):
+    def __init__(
+        self,
+        semantic: SemanticModel,
+        executor: DuckDBExecutor,
+        canonicalizer: Optional[Canonicalizer] = None,
+    ):
         self.semantic = semantic
         self.executor = executor
+        self.canonicalizer = canonicalizer
+        self._canonicalization_applied = False
+        self._like_bypass = False
 
     @staticmethod
     def _shift_month(anchor: date, delta: int) -> date:
@@ -115,9 +124,21 @@ class PlanResolver:
             values = [value]
         resolved_values = []
         for item in values:
-            resolved = self.executor.find_closest_value(dimension, item)
+            candidate = item
+            if self.canonicalizer:
+                resolution = self.canonicalizer.resolve(field, item)
+                if resolution.like_bypass:
+                    self._like_bypass = True
+                    resolved_values.append(item)
+                    continue
+                if resolution.applied:
+                    self._canonicalization_applied = True
+                    resolved_values.append(resolution.value)
+                    continue
+                candidate = resolution.value
+            resolved = self.executor.find_closest_value(dimension, candidate)
             if not resolved:
-                suggestions = self.executor.closest_matches(dimension, item)
+                suggestions = self.executor.closest_matches(dimension, candidate)
                 raise PlanResolutionError(
                     f"Could not find value '{item}' for {field}", suggestions=suggestions
                 )
@@ -128,6 +149,9 @@ class PlanResolver:
         raw_metrics = plan.get("metrics", []) or []
         aggregate_value = plan.get("aggregate")
         diagnostics: List[Dict[str, object]] = []
+
+        self._canonicalization_applied = False
+        self._like_bypass = False
 
         resolved_metrics: List[str] = []
         fallback_count_requested = False
@@ -208,6 +232,12 @@ class PlanResolver:
                 op = filter_.get("op")
                 if self._should_bypass_value_resolution(op):
                     resolved_value = filter_.get("value")
+                    if self.canonicalizer:
+                        if isinstance(resolved_value, str) and "%" in resolved_value:
+                            self._like_bypass = True
+                        elif isinstance(resolved_value, list):
+                            if any(isinstance(item, str) and "%" in item for item in resolved_value):
+                                self._like_bypass = True
                 else:
                     resolved_value = self._resolve_filter_values(field, op, filter_["value"])
                 filters.append({"field": field, "op": filter_["op"], "value": resolved_value})
@@ -273,6 +303,11 @@ class PlanResolver:
                         "op": "between",
                         "value": [start.isoformat(), end.isoformat()],
                     }
+        if self.canonicalizer:
+            resolved_plan["canonicalization"] = {
+                "applied": self._canonicalization_applied,
+                "like_bypass": self._like_bypass,
+            }
         extras = plan.get("extras")
         if extras:
             resolved_plan["extras"] = extras
