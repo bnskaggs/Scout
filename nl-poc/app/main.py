@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import guardrails, sql_builder, viz
+from .http.feedback import router as feedback_router
 from .conversation import (
     ConversationStore,
     assess_ambiguity,
@@ -85,6 +86,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+if hasattr(app, "include_router"):
+    app.include_router(feedback_router)
 
 _state: Dict[str, Any] = {
     "last_debug": None,
