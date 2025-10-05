@@ -1,16 +1,20 @@
-"""Minimal admin UI for managing canonical mappings."""
+"""Admin endpoints (HTML + JSON) for canonical mappings."""
 from __future__ import annotations
 
+import base64
 import html
+import os
 from typing import Iterable, Optional
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel
 
 from ..canonical.store import CanonicalCandidate, CanonicalStore
 from ..resolver.canonicalizer import Canonicalizer
 
 router = APIRouter()
+api_router = APIRouter(prefix="/api/admin/canonical", tags=["admin-canonical"])
 
 
 @router.get("/admin/canonical", response_class=HTMLResponse)
@@ -20,6 +24,7 @@ async def canonical_admin(
     q: str = "",
     success: Optional[str] = None,
 ) -> HTMLResponse:
+    _require_auth(request)
     store = _get_store(request)
     canonicalizer = _get_canonicalizer(request)
     results: Iterable[CanonicalCandidate] = []
@@ -51,13 +56,49 @@ async def canonical_promote(
     promoted_by: Optional[str] = Form(None),
     q: str = Form(""),
 ) -> RedirectResponse:
+    _require_auth(request)
     store = _get_store(request)
     canonicalizer = _get_canonicalizer(request)
     version = store.promote(dim, synonym, canonical, score, promoted_by=promoted_by)
-    if canonicalizer:
-        canonicalizer.load(store.load_mappings(), version)
+    _reload_canonicalizer(store, canonicalizer, version)
     target = f"/admin/canonical?dim={dim}&q={synonym or q}&success=1"
     return RedirectResponse(url=target, status_code=303)
+
+
+class _PromotePayload(BaseModel):
+    dim: str
+    synonym: str
+    canonical: str
+    score: Optional[float] = None
+    promoted_by: Optional[str] = None
+
+
+@api_router.get("")
+async def canonical_search_api(request: Request, dim: str, q: str) -> JSONResponse:
+    _require_auth(request)
+    store = _get_store(request)
+    results = store.search(dim, q)
+    payload = [
+        {"candidate": r.candidate, "score": r.score, "canonical": r.canonical}
+        for r in results
+    ]
+    return JSONResponse(payload)
+
+
+@api_router.post("/promote")
+async def canonical_promote_api(request: Request, payload: _PromotePayload) -> JSONResponse:
+    _require_auth(request)
+    store = _get_store(request)
+    canonicalizer = _get_canonicalizer(request)
+    version = store.promote(
+        payload.dim,
+        payload.synonym,
+        payload.canonical,
+        payload.score,
+        promoted_by=payload.promoted_by,
+    )
+    _reload_canonicalizer(store, canonicalizer, version)
+    return JSONResponse({"ok": True, "version": version})
 
 
 def _render_page(
@@ -194,3 +235,52 @@ def _get_canonicalizer(request: Request) -> Optional[Canonicalizer]:
     if canonicalizer is not None and not isinstance(canonicalizer, Canonicalizer):
         raise HTTPException(status_code=503, detail="Canonicalizer unavailable")
     return canonicalizer
+
+
+def _reload_canonicalizer(
+    store: CanonicalStore, canonicalizer: Optional[Canonicalizer], version: int
+) -> None:
+    if not canonicalizer:
+        return
+    mappings = store.load_mappings()
+    canonicalizer.load(mappings, version)
+
+
+def _require_auth(request: Request) -> None:
+    if not _auth_enabled():
+        return
+    header = request.headers.get("Authorization")
+    if not header or not header.startswith("Basic "):
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    encoded = header.split(" ", 1)[1]
+    try:
+        decoded = base64.b64decode(encoded).decode()
+    except Exception as exc:  # pragma: no cover - guard clause
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        ) from exc
+    if ":" not in decoded:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    user, password = decoded.split(":", 1)
+    expected_user = os.getenv("ADMIN_USER", "admin")
+    expected_pass = os.getenv("ADMIN_PASS", "admin")
+    if user != expected_user or password != expected_pass:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+
+def _auth_enabled() -> bool:
+    return os.getenv("ADMIN_BASIC_AUTH", "false").lower() in {"1", "true", "yes", "on"}
