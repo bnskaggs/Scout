@@ -1,0 +1,52 @@
+{
+  "name": "value not found fallback",
+  "turns": [
+    {
+      "user": "Show incidents by area"
+    },
+    {
+      "user": "only Westeros"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "area"
+      ],
+      "group_by": [],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-01-01",
+            "2024-07-01"
+          ]
+        },
+        {
+          "field": "area",
+          "op": "=",
+          "value": "Westeros"
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "relative_months",
+          "start": null,
+          "end": "2024-07-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "value_not_found_fallback",
+      "group_by": null,
+      "time": "2024-07-01"
+    },
+    "error": {
+      "message_contains": "Could not find value"
+    }
+  }
+}

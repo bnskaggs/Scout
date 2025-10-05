@@ -1,0 +1,46 @@
+{
+  "name": "trend ensures month grouping",
+  "turns": [
+    {
+      "user": "Show trend of incidents"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "area"
+      ],
+      "group_by": [
+        "month"
+      ],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-01-01",
+            "2024-07-01"
+          ]
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "relative_months",
+          "start": null,
+          "end": "2024-07-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "replace_dimension",
+      "group_by": "month, area",
+      "time": "2024-01-01..2024-07-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT base.month AS month, base.\"AREA NAME\" AS area, COUNT(*) AS incidents FROM base WHERE base.month >= DATE '2024-01-01' AND base.month < DATE '2024-07-01' GROUP BY base.month, base.\"AREA NAME\" ORDER BY month ASC LIMIT 100"
+    ]
+  }
+}

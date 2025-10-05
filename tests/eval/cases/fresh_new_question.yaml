@@ -1,0 +1,55 @@
+{
+  "name": "fresh ask resets state",
+  "turns": [
+    {
+      "user": "Incidents last quarter"
+    },
+    {
+      "user": "How many assaults happened in June 2024?"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [],
+      "group_by": [],
+      "metrics": [
+        "count"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-06-01",
+            "2024-07-01"
+          ]
+        },
+        {
+          "field": "area",
+          "op": "=",
+          "value": "June"
+        },
+        {
+          "field": "crime_type",
+          "op": "=",
+          "value": "Assault"
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "absolute",
+          "start": "2024-06-01",
+          "end": "2024-07-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "value_not_found_fallback",
+      "group_by": null,
+      "time": "2024-06-01..2024-07-01"
+    },
+    "error": {
+      "message_contains": "Could not find value 'June' for area"
+    }
+  }
+}
