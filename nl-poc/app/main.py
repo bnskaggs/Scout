@@ -13,6 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import guardrails, sql_builder, viz
+from .admin.canonical import router as canonical_admin_router
+from .canonical import CanonicalStore, CanonicalWatcher
 from .http.feedback import router as feedback_router
 from .conversation import (
     ConversationStore,
@@ -28,6 +30,7 @@ from .nql import NQLValidationError, compile_payload, use_nql_enabled
 from .planner import build_plan, get_last_intent_engine, get_last_nql_status
 
 from .resolver import PlanResolutionError, PlanResolver, load_semantic_model
+from .resolver.canonicalizer import Canonicalizer
 from .summarizer import summarize_results, SummarizerError, HallucinationError
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -88,6 +91,7 @@ app.add_middleware(
 )
 if hasattr(app, "include_router"):
     app.include_router(feedback_router)
+    app.include_router(canonical_admin_router)
 
 _state: Dict[str, Any] = {
     "last_debug": None,
@@ -215,9 +219,19 @@ def _ensure_database() -> DuckDBExecutor:
 def startup_event() -> None:
     executor = _ensure_database()
     semantic = load_semantic_model(SEMANTIC_PATH)
+    canonical_store = CanonicalStore(executor, semantic)
+    canonicalizer = Canonicalizer()
+    watcher = CanonicalWatcher(canonical_store, canonicalizer, interval=1.0)
+    watcher.start()
     _state["executor"] = executor
     _state["semantic"] = semantic
-    _state["resolver"] = PlanResolver(semantic, executor)
+    _state["canonical_store"] = canonical_store
+    _state["canonicalizer"] = canonicalizer
+    _state["canonical_watcher"] = watcher
+    app.state.canonical_store = canonical_store
+    app.state.canonicalizer = canonicalizer
+    app.state.canonical_watcher = watcher
+    _state["resolver"] = PlanResolver(semantic, executor, canonicalizer=canonicalizer)
     snapshot = _gather_nql_debug_snapshot()
     logger.info(
         "nql_gate_config use_nql_raw=%s use_nql=%s llm_provider=%s llm_model=%s api_key_present=%s retriever_enabled=%s",
@@ -232,6 +246,9 @@ def startup_event() -> None:
 
 @app.on_event("shutdown")
 def shutdown_event() -> None:
+    watcher = _state.get("canonical_watcher")
+    if isinstance(watcher, CanonicalWatcher):
+        watcher.stop()
     executor: DuckDBExecutor = _state.get("executor")
     if executor:
         executor.close()
@@ -379,6 +396,9 @@ def _execute_query(plan: Dict[str, Any], utterance: str, *, intent_engine: str) 
         },
         "nql": plan.get("_nql"),
     }
+    canonical_meta = resolved_plan.get("canonicalization") or {}
+    response["lineage"]["canonicalization_applied"] = bool(canonical_meta.get("applied"))
+    response["lineage"]["like_bypass"] = bool(canonical_meta.get("like_bypass"))
 
     _state["last_debug"] = {
         "plan": resolved_plan,
