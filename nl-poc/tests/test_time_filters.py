@@ -14,7 +14,7 @@ if "duckdb" not in sys.modules:
     duckdb_stub = ModuleType("duckdb")
     duckdb_stub.Error = Exception
     duckdb_stub.DuckDBPyConnection = object
-    duckdb_stub.connect = lambda path: None
+    duckdb_stub.connect = lambda path, **kwargs: None
     sys.modules["duckdb"] = duckdb_stub
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))

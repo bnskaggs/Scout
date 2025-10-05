@@ -156,6 +156,11 @@ class PlanResolver:
                 self._validate_metric(metric)
 
         metrics = resolved_metrics or raw_metrics
+        count_metric_source: Optional[str] = None
+        if aggregate_value == "count":
+            if resolved_metrics:
+                count_metric_source = resolved_metrics[0]
+            metrics = ["count"]
         for dimension in plan.get("group_by", []):
             self._validate_dimension(dimension)
         filters: List[Dict[str, object]] = []
@@ -174,11 +179,22 @@ class PlanResolver:
                 if isinstance(value, (list, tuple)):
                     start = value[0]
                     end = value[1] if len(value) > 1 else None
-                    filters.append({"field": field, "op": filter_["op"], "value": [start, end]})
+                    filter_copy = {
+                        "field": field,
+                        "op": filter_.get("op"),
+                        "value": [start, end],
+                    }
+                    if "exclusive_end" in filter_:
+                        filter_copy["exclusive_end"] = filter_["exclusive_end"]
+                    filters.append(filter_copy)
                 else:
-                    filters.append(filter_)
+                    current = {"field": field, "op": filter_.get("op"), "value": value}
+                    if "exclusive_end" in filter_:
+                        current["exclusive_end"] = filter_["exclusive_end"]
+                    filters.append(current)
                 start = value[0] if isinstance(value, list) else value
                 end = value[1] if isinstance(value, list) and len(value) > 1 else None
+                exclusive_end = bool(filter_.get("exclusive_end", True))
                 if start:
                     start_date = start
                     end_date = end or start
@@ -186,6 +202,7 @@ class PlanResolver:
                         start=self.executor.parse_date(start_date),
                         end=self.executor.parse_date(end_date),
                         label="",
+                        exclusive_end=exclusive_end,
                     )
             else:
                 op = filter_.get("op")
@@ -212,6 +229,8 @@ class PlanResolver:
         }
         if aggregate_value:
             resolved_plan["aggregate"] = aggregate_value
+        if count_metric_source:
+            resolved_plan["count_metric_source"] = count_metric_source
         if diagnostics:
             resolved_plan["diagnostics"] = diagnostics
         if compare:

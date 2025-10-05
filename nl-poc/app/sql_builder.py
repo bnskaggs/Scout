@@ -82,10 +82,9 @@ def _build_filters(filters: List[Dict[str, object]], semantic: SemanticModel, al
 
 def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
     aggregate = plan.get("aggregate")
-    metrics = plan.get("metrics", []) or []
-    if not metrics and aggregate == "count":
-        metrics = ["count"]
-    if not metrics:
+    raw_metrics = [metric for metric in (plan.get("metrics") or []) if isinstance(metric, str)]
+    metrics = raw_metrics.copy()
+    if not metrics and aggregate != "count":
         metrics = ["incidents"]
     group_by = plan.get("group_by", [])
     filters = plan.get("filters", [])
@@ -111,21 +110,23 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
         group_exprs.append(expr)
 
     metric_exprs: List[str] = []
-    for metric in metrics:
-        if metric == "count":
-            metric_exprs.append("COUNT(*) AS count")
-            continue
-        if metric == "*":
-            metric_exprs.append("COUNT(*) AS count")
-            continue
-        metric_obj = semantic.metrics[metric]
-        if aggregate == "count":
-            metric_exprs.append(f"COUNT(*) AS {metric}")
-        else:
+    metric_aliases: List[str] = []
+    if aggregate == "count":
+        metric_exprs.append("COUNT(*) AS count")
+        metric_aliases.append("count")
+    else:
+        for metric in metrics:
+            if metric in {"count", "*"}:
+                metric_exprs.append("COUNT(*) AS count")
+                metric_aliases.append("count")
+                continue
+            metric_obj = semantic.metrics[metric]
             metric_exprs.append(f"{metric_obj.sql_expression()} AS {metric}")
+            metric_aliases.append(metric)
 
     if not metric_exprs:
         metric_exprs.append("COUNT(*) AS incidents")
+        metric_aliases.append("incidents")
 
     select_clause = ", ".join(select_parts + metric_exprs)
     where_clause = _build_filters(filters, semantic, alias="base")
@@ -226,12 +227,13 @@ def build(plan: Dict[str, object], semantic: SemanticModel) -> str:
     if share_requested:
         cte_sql = f"{base_cte}, aggregated AS ({agg_query})"
         final_select_parts = []
+        metric_alias = metric_aliases[0] if metric_aliases else "incidents"
         for dim in group_by:
             final_select_parts.append(dim)
-        for metric in metrics:
+        for metric in metric_aliases:
             final_select_parts.append(metric)
         final_select_parts.append(
-            "incidents * 1.0 / NULLIF(SUM(incidents) OVER (), 0) AS share_city"
+            f"{metric_alias} * 1.0 / NULLIF(SUM({metric_alias}) OVER (), 0) AS share_city"
         )
         sql = f"{cte_sql} SELECT {', '.join(final_select_parts)} FROM aggregated"
     else:

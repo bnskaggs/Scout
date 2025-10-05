@@ -16,18 +16,14 @@ class TimeRange:
     end: date
     label: str
     op: str = "between"
+    exclusive_end: bool = True
 
     def to_filter(self) -> dict:
-        if self.op == "=":
-            return {
-                "field": "month",
-                "op": "=",
-                "value": self.start.isoformat(),
-            }
         return {
             "field": "month",
             "op": "between",
             "value": [self.start.isoformat(), self.end.isoformat()],
+            "exclusive_end": self.exclusive_end,
         }
 
 
@@ -35,7 +31,11 @@ _QUARTER_PATTERN = re.compile(
     r"\b(?:q([1-4])\s*([12]\d{3})|([12]\d{3})\s*[-\/]?\s*q([1-4]))\b",
     re.IGNORECASE,
 )
-_MONTH_PATTERN = re.compile(r"(20\d{2})[-/](0[1-9]|1[0-2])")
+_ISO_MONTH_PATTERN = re.compile(r"(20\d{2})[-/](0[1-9]|1[0-2])")
+_MONTH_NAME_PATTERN = re.compile(
+    r"\b(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(?P<year>20\d{2})\b",
+    re.IGNORECASE,
+)
 _YEAR_PATTERN = re.compile(r"\b(20\d{2})\b")
 _RELATIVE_MONTHS_PATTERN = re.compile(
     r"\b(?P<keyword>past|last)\s+(?P<count>\d{1,2})\s+months?\b",
@@ -120,7 +120,7 @@ def parse_relative_range(text: str, today: Optional[date] = None) -> Optional[Ti
                     # Use same month as today, but in that year
                     end = _next_month(date(year, min(today.month, 12), 1))
                 else:
-                    end = date(year, 12, 31)
+                    end = _next_month(date(year, 12, 1))
             return TimeRange(start=start, end=end, label=f"{year} YTD")
         # Default: current year YTD
         start = date(today.year, 1, 1)
@@ -155,14 +155,16 @@ def parse_relative_range(text: str, today: Optional[date] = None) -> Optional[Ti
         return TimeRange(start=start, end=end, label="Last 12 months")
     if "this year" in text_l:
         start = date(today.year, 1, 1)
-        end = date(today.year, 12, 31)
+        end = date(today.year + 1, 1, 1)
         return TimeRange(start=start, end=end, label=f"{today.year}")
     if "this month" in text_l:
         start = current_month_start(today)
-        return TimeRange(start=start, end=start, label=start.strftime("%Y-%m"), op="=")
+        end = _next_month(start)
+        return TimeRange(start=start, end=end, label=start.strftime("%Y-%m"))
     if "last month" in text_l:
         start = previous_month_start(today)
-        return TimeRange(start=start, end=start, label=start.strftime("%Y-%m"), op="=")
+        end = current_month_start(today)
+        return TimeRange(start=start, end=end, label=start.strftime("%Y-%m"))
     if "last 3 months" in text_l or "last three months" in text_l:
         end = current_month_start(today)
         start = _shift_month(previous_month_start(today), -2)
@@ -224,13 +226,41 @@ def parse_quarter(text: str) -> Optional[TimeRange]:
     return TimeRange(start=start, end=_next_month(end), label=f"Q{q} {year}")
 
 
+_MONTH_NAME_LOOKUP = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "sept": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+
+
 def parse_month(text: str) -> Optional[TimeRange]:
-    match = _MONTH_PATTERN.search(text)
+    match = _ISO_MONTH_PATTERN.search(text)
     if match:
         year = int(match.group(1))
         month = int(match.group(2))
         start = date(year, month, 1)
-        return TimeRange(start=start, end=start, label=start.strftime("%Y-%m"), op="=")
+        end = _next_month(start)
+        return TimeRange(start=start, end=end, label=start.strftime("%Y-%m"))
+
+    match = _MONTH_NAME_PATTERN.search(text)
+    if match:
+        month_token = match.group("month")
+        year = int(match.group("year"))
+        key = month_token[:3].lower()
+        month = _MONTH_NAME_LOOKUP[key]
+        start = date(year, month, 1)
+        end = _next_month(start)
+        return TimeRange(start=start, end=end, label=start.strftime("%Y-%m"))
     return None
 
 

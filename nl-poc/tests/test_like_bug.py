@@ -13,7 +13,7 @@ if "yaml" not in sys.modules:
 # Mock duckdb module
 if "duckdb" not in sys.modules:
     duckdb_stub = ModuleType("duckdb")
-    duckdb_stub.connect = lambda path: None
+    duckdb_stub.connect = lambda path, **kwargs: None
     duckdb_stub.DuckDBPyConnection = object
     duckdb_stub.Error = Exception
     sys.modules["duckdb"] = duckdb_stub

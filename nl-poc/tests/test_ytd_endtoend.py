@@ -29,7 +29,8 @@ print(f"    Group by: {plan.get('group_by')}")
 
 # Resolve plan
 print("\n[3] RESOLVING PLAN...")
-semantic = load_semantic_model()
+semantic_path = Path(__file__).parent.parent / "config" / "semantic.yml"
+semantic = load_semantic_model(semantic_path)
 db_path = Path(__file__).parent.parent / "data" / "games.duckdb"
 executor = DuckDBExecutor(db_path)
 resolver = PlanResolver(semantic, executor)

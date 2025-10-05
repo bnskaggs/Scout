@@ -10,6 +10,7 @@ from datetime import date
 from typing import Dict, List, Optional
 
 from .llm_client import LLMNotConfigured, call_intent_llm, fill_time_tokens
+from .rewriter.canonicalize_metric import canonicalize_metric as _canonicalize_metric
 from .synonyms import (
     SHARE_TOKENS,
     SynonymBundle,
@@ -248,19 +249,8 @@ def _normalize_filters(
         current = dict(filt)
         field = current.get("field")
         if field == "month":
-            op = current.get("op", "between")
-            value = current.get("value")
-            if isinstance(value, list):
-                start = value[0] if value else None
-                end = value[1] if len(value) > 1 else None
-                if op == "between" and start and (not end or end == start):
-                    current["op"] = "="
-                    current["value"] = start
-                elif op != "=" and len(value) == 1 and start:
-                    current["op"] = "="
-                    current["value"] = start
-            elif op == "between" and isinstance(value, str):
-                current["op"] = "="
+            normalized.append(current)
+            continue
         elif field == "weapon":
             value = current.get("value")
             collected: List[str] = []
@@ -402,7 +392,7 @@ def _post_process_plan(
     order_by = plan.get("order_by")
     if order_by is None:
         plan["order_by"] = []
-    return plan
+    return _canonicalize_metric(question, plan, bundle)
 
 
 def build_plan_rule_based(question: str) -> Dict[str, object]:
@@ -551,10 +541,7 @@ def _next_month_start(value: date) -> date:
 
 def _time_range_to_interval(time_range: TimeRange) -> str:
     start = time_range.start
-    if time_range.op == "=":
-        end = _next_month_start(start)
-    else:
-        end = time_range.end
+    end = time_range.end
     return f"{start.isoformat()}/{end.isoformat()}"
 
 
