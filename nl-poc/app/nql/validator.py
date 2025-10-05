@@ -41,21 +41,6 @@ def _next_quarter_start(dt: date) -> date:
     return date(year, month, 1)
 
 
-def _ensure_single_month_filter(nql: NQLQuery, critic_pass: List[str]) -> None:
-    if nql.time.window.type != "single_month" or not nql.flags.single_month_equals:
-        return
-    start = _parse_date(nql.time.window.start, "single_month.start")
-    if start != _first_day_of_month(start):
-        raise NQLValidationError("single_month start must be first day of month")
-    target_value = start.isoformat()
-    matching = [f for f in nql.filters if f.field == "month" and f.op == "="]
-    if not matching:
-        raise NQLValidationError("single_month queries must include an equality filter on month")
-    if not any(str(f.value) == target_value for f in matching):
-        raise NQLValidationError("month equality filter must match the requested single month")
-    critic_pass.append("single_month_equality")
-
-
 def _ensure_quarter_bounds(nql: NQLQuery, critic_pass: List[str]) -> None:
     if nql.time.window.type != "quarter" or not nql.flags.quarter_exclusive_end:
         return
@@ -131,7 +116,6 @@ def validate_nql(nql: NQLQuery) -> NQLQuery:
         raise NQLValidationError("metrics must contain at least one entry")
     critic_pass: List[str] = []
 
-    _ensure_single_month_filter(working, critic_pass)
     _ensure_quarter_bounds(working, critic_pass)
     _ensure_trend_grouping(working, critic_pass)
     _ensure_mom_expand_prior(working, critic_pass)

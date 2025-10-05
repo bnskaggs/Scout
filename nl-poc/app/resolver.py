@@ -216,10 +216,37 @@ class PlanResolver:
             resolved_plan["diagnostics"] = diagnostics
         if compare:
             resolved_plan["compare"] = compare
-            if compare.get("type") == "mom" and time_range and time_range.start == time_range.end:
+            if compare.get("type") == "mom":
                 month_filters = [f for f in filters if f.get("field") == "month"]
+                target_start: Optional[date] = None
                 if month_filters:
-                    target_start = time_range.start
+                    month_filter = month_filters[0]
+                    op = month_filter.get("op")
+                    value = month_filter.get("value")
+                    if op == "=" and value:
+                        try:
+                            target_start = self.executor.parse_date(value)
+                        except Exception:  # pragma: no cover - defensive conversion
+                            target_start = None
+                    elif isinstance(value, list) and value:
+                        start_raw = value[0]
+                        end_raw = value[1] if len(value) > 1 else None
+                        if start_raw:
+                            try:
+                                start_date = self.executor.parse_date(start_raw)
+                            except Exception:  # pragma: no cover - defensive conversion
+                                start_date = None
+                            else:
+                                if not end_raw:
+                                    target_start = start_date
+                                else:
+                                    try:
+                                        end_date = self.executor.parse_date(end_raw)
+                                    except Exception:  # pragma: no cover - defensive conversion
+                                        end_date = None
+                                    if end_date and end_date == self._shift_month(start_date, 1):
+                                        target_start = start_date
+                if target_start:
                     start = self._shift_month(target_start, -1)
                     end = self._shift_month(target_start, 1)
                     resolved_plan["internal_window"] = {
@@ -227,6 +254,12 @@ class PlanResolver:
                         "op": "between",
                         "value": [start.isoformat(), end.isoformat()],
                     }
+        extras = plan.get("extras")
+        if extras:
+            resolved_plan["extras"] = extras
+        compile_info = plan.get("compileInfo") or (extras or {}).get("compileInfo")
+        if compile_info:
+            resolved_plan["compileInfo"] = compile_info
         resolved_plan["time_window_label"] = describe_time_range(time_range)
         return resolved_plan
 
