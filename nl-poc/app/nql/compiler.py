@@ -29,7 +29,16 @@ def _compile_time_filter(nql: NQLQuery, today: Optional[date]) -> Dict[str, Any]
     time_field = "month"
     if window.type == "single_month":
         start = _parse_date(window.start, "single_month.start")
-        return {"field": time_field, "op": "=", "value": start.isoformat()}
+        end = _shift_month(start, 1)
+        if not window.end:
+            window.end = end.isoformat()
+        if not window.exclusive_end:
+            window.exclusive_end = True
+        return {
+            "field": time_field,
+            "op": "between",
+            "value": [start.isoformat(), end.isoformat()],
+        }
     if window.type == "quarter":
         start = _parse_date(window.start, "quarter.start")
         end = _parse_date(window.end, "quarter.end")
@@ -135,6 +144,13 @@ def compile_nql_query(nql: NQLQuery, today: Optional[date] = None) -> Dict[str, 
         "nql_compiled": True,
         "critic_pass": nql.provenance.critic_pass,
     }
+    compile_info: Dict[str, Any] = {}
+    if nql.metrics:
+        compile_info["metricAlias"] = nql.metrics[0].alias
+    compile_info["groupBy"] = list(nql.group_by)
+    if compile_info:
+        plan["compileInfo"] = compile_info
+        extras["compileInfo"] = compile_info
     plan["extras"] = extras
     plan["_nql"] = nql.dict()
     plan["_critic_pass"] = nql.provenance.critic_pass

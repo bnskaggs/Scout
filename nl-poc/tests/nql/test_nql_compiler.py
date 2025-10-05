@@ -61,16 +61,23 @@ def _load_fixture(name: str) -> dict:
         return json.load(f)
 
 
-def test_single_month_equality_filter():
+def test_single_month_range_filter():
     payload = _load_fixture("single_month.json")
     compiled = compile_payload(payload)
     plan = compiled.plan
     assert plan["filters"] == [
-        {"field": "month", "op": "=", "value": "2023-06-01"}
+        {
+            "field": "month",
+            "op": "between",
+            "value": ["2023-06-01", "2023-07-01"],
+        }
     ]
     assert plan["limit"] == 100
     assert plan["extras"]["rowcap_hint"] == 2000
-    assert "single_month_equality" in plan["_critic_pass"]
+    assert "single_month_equality" not in plan["_critic_pass"]
+    compile_info = plan.get("compileInfo") or {}
+    assert compile_info.get("metricAlias") == "incidents"
+    assert compile_info.get("groupBy") == []
 
 
 def test_quarter_window_enforces_exclusive_end():
