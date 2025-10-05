@@ -1,0 +1,48 @@
+{
+  "name": "same but by weapon replaces, not appends",
+  "turns": [
+    {
+      "user": "Incidents by area for 2023-06"
+    },
+    {
+      "user": "same but by weapon"
+    }
+  ],
+  "today": "2023-07-15",
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "weapon"
+      ],
+      "group_by": [],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2023-06-01",
+            "2023-07-01"
+          ]
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "absolute",
+          "start": "2023-06-01",
+          "end": "2023-07-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "replace_dimension",
+      "group_by": "weapon",
+      "time": "2023-06-01..2023-07-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT base.\"Weapon Desc\" AS weapon, COUNT(*) AS incidents FROM base WHERE base.month >= DATE '2023-06-01' AND base.month < DATE '2023-07-01' GROUP BY base.\"Weapon Desc\" LIMIT 100"
+    ]
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "another fresh metric change",
+  "turns": [
+    {
+      "user": "Show incidents by area"
+    },
+    {
+      "user": "How many assaults happened in 2022?"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [],
+      "group_by": [],
+      "metrics": [
+        "count"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2022-01-01",
+            "2023-01-01"
+          ]
+        },
+        {
+          "field": "crime_type",
+          "op": "=",
+          "value": "Assault"
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "absolute",
+          "start": "2022-01-01",
+          "end": "2023-01-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "fresh_query",
+      "group_by": null,
+      "time": "2022-01-01..2023-01-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT COUNT(*) AS count FROM base WHERE base.\"Crm Cd Desc\" = 'Assault' AND base.month >= DATE '2022-01-01' AND base.month < DATE '2023-01-01' LIMIT 100"
+    ]
+  }
+}

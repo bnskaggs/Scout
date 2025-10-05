@@ -1,0 +1,52 @@
+{
+  "name": "premise filter added",
+  "turns": [
+    {
+      "user": "Show incidents by premise"
+    },
+    {
+      "user": "only Street"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "premise"
+      ],
+      "group_by": [],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-01-01",
+            "2024-07-01"
+          ]
+        },
+        {
+          "field": "premise",
+          "op": "=",
+          "value": "Street"
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "relative_months",
+          "start": null,
+          "end": "2024-07-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "refine_filters",
+      "group_by": "premise",
+      "time": "2024-01-01..2024-07-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT base.\"Premis Desc\" AS premise, COUNT(*) AS incidents FROM base WHERE base.\"Premis Desc\" = 'Street' AND base.month >= DATE '2024-01-01' AND base.month < DATE '2024-07-01' GROUP BY base.\"Premis Desc\" LIMIT 100"
+    ]
+  }
+}

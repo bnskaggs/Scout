@@ -1,0 +1,47 @@
+{
+  "name": "ytd then group by weapon",
+  "turns": [
+    {
+      "user": "Incidents YTD"
+    },
+    {
+      "user": "break it down by weapon"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "weapon"
+      ],
+      "group_by": [],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-01-01",
+            "2024-08-01"
+          ]
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "absolute",
+          "start": "2024-01-01",
+          "end": "2024-08-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "replace_dimension",
+      "group_by": "weapon",
+      "time": "2024-01-01..2024-08-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT base.\"Weapon Desc\" AS weapon, COUNT(*) AS incidents FROM base WHERE base.month >= DATE '2024-01-01' AND base.month < DATE '2024-08-01' GROUP BY base.\"Weapon Desc\" LIMIT 100"
+    ]
+  }
+}

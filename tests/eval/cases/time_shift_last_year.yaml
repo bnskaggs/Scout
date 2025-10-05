@@ -1,0 +1,47 @@
+{
+  "name": "time shift to last year",
+  "turns": [
+    {
+      "user": "Show incidents this year"
+    },
+    {
+      "user": "actually last year"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "area"
+      ],
+      "group_by": [],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-01-01",
+            "2025-01-01"
+          ]
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "relative_months",
+          "start": null,
+          "end": "2025-01-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "adjust_time",
+      "group_by": "area",
+      "time": "2024-01-01..2025-01-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT base.\"AREA NAME\" AS area, COUNT(*) AS incidents FROM base WHERE base.month >= DATE '2024-01-01' AND base.month < DATE '2025-01-01' GROUP BY base.\"AREA NAME\" LIMIT 100"
+    ]
+  }
+}

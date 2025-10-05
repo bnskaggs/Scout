@@ -1,0 +1,47 @@
+{
+  "name": "correction to 2023",
+  "turns": [
+    {
+      "user": "Show incidents in 2022"
+    },
+    {
+      "user": "No, use 2023"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "area"
+      ],
+      "group_by": [],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2023-01-01",
+            "2024-01-01"
+          ]
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "absolute",
+          "start": "2023-01-01",
+          "end": "2024-01-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "adjust_time",
+      "group_by": "area",
+      "time": "2023-01-01..2024-01-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT base.\"AREA NAME\" AS area, COUNT(*) AS incidents FROM base WHERE base.month >= DATE '2023-01-01' AND base.month < DATE '2024-01-01' GROUP BY base.\"AREA NAME\" LIMIT 100"
+    ]
+  }
+}

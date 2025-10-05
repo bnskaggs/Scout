@@ -1,0 +1,52 @@
+{
+  "name": "add only central filter",
+  "turns": [
+    {
+      "user": "Show incidents by area"
+    },
+    {
+      "user": "only Central"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "area"
+      ],
+      "group_by": [],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-01-01",
+            "2024-07-01"
+          ]
+        },
+        {
+          "field": "area",
+          "op": "=",
+          "value": "Central"
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "relative_months",
+          "start": null,
+          "end": "2024-07-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "refine_filters",
+      "group_by": "area",
+      "time": "2024-01-01..2024-07-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT base.\"AREA NAME\" AS area, COUNT(*) AS incidents FROM base WHERE base.\"AREA NAME\" = 'Central' AND base.month >= DATE '2024-01-01' AND base.month < DATE '2024-07-01' GROUP BY base.\"AREA NAME\" LIMIT 100"
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "quarter mom toggle",
+  "turns": [
+    {
+      "user": "Show incidents in January 2024"
+    },
+    {
+      "user": "turn on month over month"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "area"
+      ],
+      "group_by": [],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-01-01",
+            "2024-02-01"
+          ]
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "absolute",
+          "start": "2024-01-01",
+          "end": "2024-02-01"
+        }
+      },
+      "compare": {
+        "type": "mom",
+        "mode": null
+      }
+    },
+    "snapshot": {
+      "action": "toggle_mom",
+      "group_by": "area",
+      "time": "2024-01-01..2024-02-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw), aggregated AS (SELECT base.\"AREA NAME\" AS area, base.month AS month, COUNT(*) AS incidents FROM base WHERE base.month >= DATE '2023-12-01' AND base.month < DATE '2024-02-01' GROUP BY base.\"AREA NAME\", base.month), ranked AS (SELECT aggregated.*, LAG(incidents, 1) OVER (PARTITION BY area ORDER BY month) AS prior_incidents FROM aggregated) SELECT area, incidents, CASE WHEN prior_incidents IS NULL OR prior_incidents = 0 THEN NULL ELSE (incidents - prior_incidents) * 100.0 / prior_incidents END AS change_pct, month FROM ranked WHERE month >= DATE '2024-01-01' AND month < DATE '2024-02-01' ORDER BY month ASC LIMIT 100"
+    ]
+  }
+}

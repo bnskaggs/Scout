@@ -1,0 +1,50 @@
+{
+  "name": "toggle mom off",
+  "turns": [
+    {
+      "user": "Show incidents for March 2024"
+    },
+    {
+      "user": "turn on month over month"
+    },
+    {
+      "user": "turn off month over month"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [
+        "area"
+      ],
+      "group_by": [],
+      "metrics": [
+        "incidents"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-03-01",
+            "2024-04-01"
+          ]
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "absolute",
+          "start": "2024-03-01",
+          "end": "2024-04-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "toggle_compare",
+      "group_by": "area",
+      "time": "2024-03-01..2024-04-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT base.\"AREA NAME\" AS area, COUNT(*) AS incidents FROM base WHERE base.month >= DATE '2024-03-01' AND base.month < DATE '2024-04-01' GROUP BY base.\"AREA NAME\" LIMIT 100"
+    ]
+  }
+}

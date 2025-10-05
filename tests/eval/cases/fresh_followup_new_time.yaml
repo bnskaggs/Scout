@@ -1,0 +1,45 @@
+{
+  "name": "fresh question new time",
+  "turns": [
+    {
+      "user": "Show incidents by area"
+    },
+    {
+      "user": "How many incidents happened last quarter?"
+    }
+  ],
+  "expect": {
+    "nql": {
+      "dimensions": [],
+      "group_by": [],
+      "metrics": [
+        "count"
+      ],
+      "filters": [
+        {
+          "field": "month",
+          "op": "between",
+          "value": [
+            "2024-04-01",
+            "2024-07-01"
+          ]
+        }
+      ],
+      "time": {
+        "window": {
+          "type": "absolute",
+          "start": "2024-04-01",
+          "end": "2024-07-01"
+        }
+      }
+    },
+    "snapshot": {
+      "action": "fresh_query",
+      "group_by": null,
+      "time": "2024-04-01..2024-07-01"
+    },
+    "sql_contains": [
+      "WITH base AS (SELECT DATE_TRUNC('month', \"DATE OCC\") AS month, * FROM la_crime_raw) SELECT COUNT(*) AS count FROM base WHERE base.month >= DATE '2024-04-01' AND base.month < DATE '2024-07-01' LIMIT 100"
+    ]
+  }
+}
