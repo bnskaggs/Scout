@@ -113,7 +113,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for lightweight test 
 
 
 IntentType = Literal["aggregate", "detail", "trend", "compare", "rank", "distribution"]
-MetricAgg = Literal["count", "sum", "avg", "min", "max", "distinct_count"]
+MetricAgg = Literal["count", "sum", "avg", "min", "max", "distinct_count", "count_distinct"]
 FilterOp = Literal["=", "!=", ">", ">=", "<", "<=", "between", "in", "not_in", "like", "like_any", "ilike", "regex"]
 FilterType = Literal["text", "text_raw", "number", "date", "category"]
 TimeGrain = Literal["day", "week", "month", "quarter", "year"]

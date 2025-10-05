@@ -347,10 +347,15 @@ def _execute_query(plan: Dict[str, Any], utterance: str, *, intent_engine: str) 
     if rowcap_warning:
         warnings.append(rowcap_warning)
 
-    metric_defs = {
-        metric: semantic.metrics[metric].sql_expression()
-        for metric in resolved_plan.get("metrics", [])
-    }
+    resolved_metrics = [metric for metric in resolved_plan.get("metrics", []) if isinstance(metric, str)]
+    aggregate = resolved_plan.get("aggregate")
+    if aggregate == "count" or any(metric in {"*", "count"} for metric in resolved_metrics):
+        metric_defs = {"count": "COUNT(*)"}
+    else:
+        metric_defs = {
+            metric: semantic.metrics[metric].sql_expression()
+            for metric in resolved_metrics
+        }
 
     response = {
         "answer": narrative,

@@ -12,7 +12,7 @@ if "yaml" not in sys.modules:
 
 if "duckdb" not in sys.modules:
     duckdb_stub = ModuleType("duckdb")
-    duckdb_stub.connect = lambda path: None
+    duckdb_stub.connect = lambda path, **kwargs: None
     duckdb_stub.DuckDBPyConnection = object
     duckdb_stub.Error = Exception
     sys.modules["duckdb"] = duckdb_stub
@@ -58,7 +58,7 @@ def test_count_by_area_uses_count_metric():
     plan = build_plan_rule_based("count by area in 2024")
     assert plan.get("aggregate") == "count"
     assert plan.get("group_by") == ["area"]
-    assert plan.get("metrics") == ["count"]
+    assert plan.get("metrics") == ["*"]
 
     resolver = PlanResolver(_semantic_model(), _ExecutorStub())
     resolved = resolver.resolve(plan)
@@ -70,4 +70,15 @@ def test_number_of_stabbings_adds_weapon_filter():
     plan = build_plan_rule_based("number of stabbings last month")
     assert plan.get("aggregate") == "count"
     filters = plan.get("filters") or []
-    assert any(f.get("field") == "weapon" for f in filters)
+    weapon_filters = [f for f in filters if f.get("field") == "weapon"]
+    assert weapon_filters
+
+    def _values(filt):
+        raw = filt.get("value")
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, str):
+            return [raw]
+        return []
+
+    assert any("%stab%" in value for filt in weapon_filters for value in _values(filt))

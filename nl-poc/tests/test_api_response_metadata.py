@@ -6,7 +6,7 @@ import pytest
 
 if "duckdb" not in sys.modules:
     duckdb_stub = ModuleType("duckdb")
-    duckdb_stub.connect = lambda path: None
+    duckdb_stub.connect = lambda path, **kwargs: None
     duckdb_stub.DuckDBPyConnection = object
     duckdb_stub.Error = Exception
     sys.modules["duckdb"] = duckdb_stub
@@ -47,6 +47,7 @@ if "fastapi" not in sys.modules:
 
     fastapi_stub.FastAPI = FastAPI
     fastapi_stub.HTTPException = HTTPException
+    fastapi_stub.Header = lambda *args, **kwargs: None
     sys.modules["fastapi"] = fastapi_stub
 
     middleware_module = ModuleType("fastapi.middleware")

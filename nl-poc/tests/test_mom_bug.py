@@ -22,7 +22,10 @@ compare = plan.get('compare')
 print(f"\nCompare: {compare}")
 
 # Verify
-assert any(f['field'] == 'month' and f['value'] == '2024-07-01' for f in filters), "Missing correct month filter"
+month_filters = [f for f in filters if f['field'] == 'month']
+assert month_filters, "Missing month filter"
+expected_month_value = ['2024-07-01', '2024-08-01']
+assert any(f.get('value') == expected_month_value for f in month_filters), "Missing correct month filter"
 area_filters = [f for f in filters if f['field'] == 'area']
 assert len(area_filters) == 1, f"Expected 1 area filter, got {len(area_filters)}"
 assert area_filters[0]['value'] == 'Hollywood', f"Expected 'Hollywood', got '{area_filters[0]['value']}'"

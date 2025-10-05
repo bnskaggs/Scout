@@ -33,7 +33,7 @@ if "duckdb" not in sys.modules:
         def execute(self, sql):
             return MockResult(self.num_rows)
 
-    duckdb_stub.connect = lambda path: MockConnection()
+    duckdb_stub.connect = lambda path, **kwargs: MockConnection()
     sys.modules["duckdb"] = duckdb_stub
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
