@@ -6,3 +6,4 @@ nl-poc/*.md
 nl-poc/nul
 tests/*.md
 nl-poc/tests/*.md
+var/
