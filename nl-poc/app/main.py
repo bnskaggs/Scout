@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import guardrails, sql_builder, viz
+from .admin.canonical import api_router as canonical_api_router
 from .admin.canonical import router as canonical_admin_router
 from .canonical import CanonicalStore, CanonicalWatcher
 from .http.feedback import router as feedback_router
@@ -92,6 +93,7 @@ app.add_middleware(
 if hasattr(app, "include_router"):
     app.include_router(feedback_router)
     app.include_router(canonical_admin_router)
+    app.include_router(canonical_api_router)
 
 _state: Dict[str, Any] = {
     "last_debug": None,
