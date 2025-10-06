@@ -6,8 +6,34 @@ from typing import Dict, List
 def choose_chart(plan: Dict[str, object], records: List[Dict[str, object]]) -> Dict[str, object]:
     group_by = plan.get("group_by", [])
     compare = plan.get("compare")
+    panel_by = plan.get("panel_by")
+
     if not records:
         return {"type": "bar", "x": None, "y": None, "data": []}
+
+    # v0.2: panel_by creates small multiples/compare panels
+    if panel_by:
+        return {
+            "type": "small_multiple",
+            "panel_by": panel_by,
+            "x": group_by[0] if group_by else "value",
+            "y": plan.get("metrics", ["incidents"])[0],
+            "data": records,
+        }
+
+    # v0.2: Compare with diff_abs/diff_pct
+    if compare and isinstance(compare, dict):
+        if "diff_abs" in (records[0] if records else {}) or "diff_pct" in (records[0] if records else {}):
+            diff_field = "diff_pct" if "diff_pct" in records[0] else "diff_abs"
+            return {
+                "type": "compare_bar",
+                "x": group_by[0] if group_by else "value",
+                "y_current": "current",
+                "y_baseline": "baseline",
+                "y_diff": diff_field,
+                "data": records,
+            }
+
     if group_by and group_by[0] == "month":
         return {
             "type": "line",
@@ -15,7 +41,7 @@ def choose_chart(plan: Dict[str, object], records: List[Dict[str, object]]) -> D
             "y": plan.get("metrics", ["incidents"])[0],
             "data": records,
         }
-    if compare and "change_pct" in records[0]:
+    if compare and "change_pct" in (records[0] if records else {}):
         return {
             "type": "bar",
             "x": group_by[0] if group_by else "value",
@@ -32,6 +58,33 @@ def build_narrative(plan: Dict[str, object], records: List[Dict[str, object]]) -
         return "No incidents found for the selected period."
 
     compare = plan.get("compare")
+    panel_by = plan.get("panel_by")
+
+    # v0.2: Compare narrative with current/baseline/diff
+    if compare and isinstance(compare, dict) and records:
+        first_rec = records[0]
+        if "current" in first_rec and "baseline" in first_rec:
+            current_val = first_rec.get("current", 0)
+            baseline_val = first_rec.get("baseline", 0)
+            diff_pct = first_rec.get("diff_pct")
+            diff_abs = first_rec.get("diff_abs")
+
+            baseline_label = compare.get("baseline", "previous period")
+            if baseline_label == "previous_period":
+                baseline_label = "previous period"
+            elif baseline_label == "same_period_last_year":
+                baseline_label = "same period last year"
+
+            parts = [f"Current: {current_val}, Baseline ({baseline_label}): {baseline_val}"]
+
+            if diff_pct is not None:
+                direction = "increase" if diff_pct > 0 else "decrease"
+                parts.append(f"{abs(round(diff_pct, 1))}% {direction}")
+            elif diff_abs is not None:
+                direction = "increase" if diff_abs > 0 else "decrease"
+                parts.append(f"{abs(round(diff_abs, 1))} {direction}")
+
+            return "; ".join(parts) + "."
     compile_info = {}
     extras = plan.get("extras") or {}
     if isinstance(plan.get("compileInfo"), dict):

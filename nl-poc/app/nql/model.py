@@ -120,7 +120,10 @@ TimeGrain = Literal["day", "week", "month", "quarter", "year"]
 WindowType = Literal["single_month", "absolute", "quarter", "relative_months", "ytd"]
 CompareType = Literal["mom", "yoy", "wow", "dod"]
 CompareMode = Literal["time", "dimension", "metric"]
-CompareBaseline = Literal["previous_period", "same_period_last_year"]
+CompareBaseline = Literal["previous_period", "same_period_last_year", "absolute"]
+CompareMethod = Literal["diff_abs", "diff_pct"]
+BucketMethod = Literal["quantile", "custom"]
+AggregateEstimator = Literal["exact", "approx"]
 SortDirection = Literal["asc", "desc"]
 
 
@@ -179,6 +182,35 @@ class CompareSpec(BaseModel):
     lhs_time: Optional[str] = None
     rhs_time: Optional[str] = None
     dimension: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+    method: Optional[CompareMethod] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class BucketSpec(BaseModel):
+    field: str
+    method: BucketMethod
+    params: dict = Field(default_factory=dict)
+
+    class Config:
+        extra = "forbid"
+
+
+class AggregateSpec(BaseModel):
+    median_of: Optional[str] = None
+    distinct_of: Optional[str] = None
+    estimator: AggregateEstimator = "exact"
+
+    class Config:
+        extra = "forbid"
+
+
+class TopKWithinGroupSpec(BaseModel):
+    k: int = Field(ge=1)
+    by: str
 
     class Config:
         extra = "forbid"
@@ -216,7 +248,7 @@ class SortSpec(BaseModel):
 
 
 class NQLQuery(BaseModel):
-    nql_version: Literal["0.1"]
+    nql_version: Literal["0.1", "0.2"]
     intent: IntentType
     dataset: str
     metrics: List[Metric]
@@ -226,8 +258,12 @@ class NQLQuery(BaseModel):
     filters: List[Filter] = Field(default_factory=list)
     compare: Optional[CompareSpec] = None
     group_by: List[str] = Field(default_factory=list)
+    panel_by: Optional[str] = None
     sort: List[SortSpec] = Field(default_factory=list)
     limit: int = Field(default=100, ge=1)
+    bucket: Optional[BucketSpec] = None
+    aggregate_v2: Optional[AggregateSpec] = None
+    top_k_within_group: Optional[TopKWithinGroupSpec] = None
     flags: Flags = Field(default_factory=Flags)
     provenance: Provenance = Field(default_factory=Provenance)
 

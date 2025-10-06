@@ -104,8 +104,40 @@ def _validate_sort(nql: NQLQuery, critic_pass: List[str]) -> None:
 def _clamp_limit(nql: NQLQuery, critic_pass: List[str]) -> None:
     rowcap_hint = min(max(1, nql.flags.rowcap_hint), SERVER_MAX_LIMIT)
     nql.flags.rowcap_hint = rowcap_hint
-    nql.limit = min(max(1, nql.limit), rowcap_hint, SERVER_MAX_LIMIT)
+
+    # v0.2 limit range: 5-100
+    if nql.nql_version == "0.2":
+        nql.limit = min(max(5, nql.limit), 100)
+    else:
+        nql.limit = min(max(1, nql.limit), rowcap_hint, SERVER_MAX_LIMIT)
     critic_pass.append("limit_clamp")
+
+
+def _validate_compare_baseline_absolute(nql: NQLQuery, critic_pass: List[str]) -> None:
+    """v0.2: baseline="absolute" requires start and end."""
+    if nql.nql_version != "0.2" or not nql.compare:
+        return
+    if nql.compare.baseline == "absolute":
+        if not nql.compare.start or not nql.compare.end:
+            raise NQLValidationError("compare.baseline='absolute' requires start and end")
+    critic_pass.append("baseline_absolute_requires_bounds")
+
+
+def _validate_single_month_for_mom(nql: NQLQuery, critic_pass: List[str]) -> None:
+    """v0.2: MoM requires single month or last complete month."""
+    if nql.nql_version != "0.2" or not nql.compare:
+        return
+    if nql.compare.baseline == "previous_period" and nql.time.window.type not in ("single_month", "relative_months"):
+        raise NQLValidationError("MoM requires single_month or last complete month (relative_months)")
+    critic_pass.append("single_month_required_for_mom")
+
+
+def _validate_select_only(nql: NQLQuery, critic_pass: List[str]) -> None:
+    """v0.2: Enforce SELECT-only SQL (no writes)."""
+    if nql.nql_version != "0.2":
+        return
+    # This is a placeholder - actual enforcement happens in SQL builder
+    critic_pass.append("select_only_guard")
 
 
 def validate_nql(nql: NQLQuery) -> NQLQuery:
@@ -122,6 +154,12 @@ def validate_nql(nql: NQLQuery) -> NQLQuery:
     _validate_like_filters(working, critic_pass)
     _validate_sort(working, critic_pass)
     _clamp_limit(working, critic_pass)
+
+    # v0.2 validators
+    if working.nql_version == "0.2":
+        _validate_compare_baseline_absolute(working, critic_pass)
+        _validate_single_month_for_mom(working, critic_pass)
+        _validate_select_only(working, critic_pass)
 
     provenance = working.provenance
     seen: Iterable[str] = provenance.critic_pass

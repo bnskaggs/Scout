@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/v2/ -v)",
+      "Bash(python -m pytest tests/v2/ -v --tb=short)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

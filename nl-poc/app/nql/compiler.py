@@ -119,6 +119,16 @@ def _compile_compare(nql: NQLQuery) -> Optional[Dict[str, Any]]:
         compare["periods"] = periods
     if compare_model.baseline:
         compare["baseline"] = compare_model.baseline
+
+    # v0.2 compare fields
+    if nql.nql_version == "0.2":
+        if compare_model.start:
+            compare["start"] = compare_model.start
+        if compare_model.end:
+            compare["end"] = compare_model.end
+        if compare_model.method:
+            compare["method"] = compare_model.method
+
     if compare_model.internal_window:
         compare["internal_window"] = compare_model.internal_window.dict()
     return compare or None
@@ -139,6 +149,18 @@ def compile_nql_query(nql: NQLQuery, today: Optional[date] = None) -> Dict[str, 
     compare = _compile_compare(nql)
     if compare:
         plan["compare"] = compare
+
+    # v0.2 fields
+    if nql.nql_version == "0.2":
+        if nql.panel_by:
+            plan["panel_by"] = nql.panel_by
+        if nql.bucket:
+            plan["bucket"] = nql.bucket.dict()
+        if nql.aggregate_v2:
+            plan["aggregate_v2"] = nql.aggregate_v2.dict()
+        if nql.top_k_within_group:
+            plan["top_k_within_group"] = nql.top_k_within_group.dict()
+
     extras: Dict[str, Any] = {
         "rowcap_hint": nql.flags.rowcap_hint,
         "nql_compiled": True,

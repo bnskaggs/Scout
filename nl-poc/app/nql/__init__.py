@@ -51,6 +51,14 @@ def flag_state() -> Dict[str, Any]:
     return {"raw": raw, "enabled": _coerce_env_flag(raw)}
 
 
+def use_nql_v2_enabled() -> bool:
+    """Return True if NQL v0.2 features are enabled via environment flag."""
+
+    _load_env_once()
+    raw = os.getenv("NQL_V2_ENABLED")
+    return _coerce_env_flag(raw, default=False)
+
+
 def compile_payload(payload: Dict[str, Any], today: Optional[date] = None) -> CompiledNQL:
     """Validate and compile a raw payload dictionary into a planner plan."""
 
@@ -72,4 +80,5 @@ __all__ = [
     "flag_state",
     "is_enabled",
     "use_nql_enabled",
+    "use_nql_v2_enabled",
 ]
