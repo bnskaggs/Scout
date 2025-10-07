@@ -32,7 +32,7 @@ type ManualChatResponse = {
 };
 
 const CHATKIT_SCRIPT_URL = process.env.NEXT_PUBLIC_CHATKIT_SCRIPT_URL ??
-  'https://cdn.openai.com/chatkit/latest/chatkit.js';
+  'https://cdn.platform.openai.com/deployments/chatkit/chatkit.js';
 
 function loadChatKitScript(url: string): Promise<void> {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
