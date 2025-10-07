@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from . import guardrails, sql_builder, viz
 from .agentkit import router as agentkit_router
+from .agentkit import routes as agentkit_runtime
 from .admin.canonical import api_router as canonical_api_router
 from .admin.canonical import router as canonical_admin_router
 from .canonical import CanonicalStore, CanonicalWatcher
@@ -66,6 +67,15 @@ class ChatClarifyRequest(BaseModel):
 class SummarizeRequest(BaseModel):
     results: List[Dict[str, Any]]
     plan: Dict[str, Any]
+
+
+class ChatKitSessionRequest(BaseModel):
+    thread_id: Optional[str] = None
+
+
+class ChatKitSessionResponse(BaseModel):
+    client_secret: str
+    thread_id: str
 
 
 import logging, sys
@@ -476,6 +486,56 @@ def _build_chips_from_nql(nql_payload: Optional[Dict[str, Any]]) -> Dict[str, Li
         "filters": filter_chips,
         "time": time_chips,
     }
+
+
+@app.post("/api/chatkit/session", response_model=ChatKitSessionResponse)
+def create_chatkit_session(payload: ChatKitSessionRequest) -> ChatKitSessionResponse:
+    client, assistant_id, _ = agentkit_runtime.ensure_agent_runtime()
+
+    thread_id = payload.thread_id
+    if thread_id:
+        try:
+            client.beta.threads.retrieve(thread_id=thread_id)
+        except Exception:
+            thread_id = None
+
+    if not thread_id:
+        try:
+            thread = client.beta.threads.create()
+            thread_id = getattr(thread, "id", None)
+        except Exception as exc:  # pragma: no cover - network errors
+            raise HTTPException(status_code=500, detail=f"failed_to_create_thread: {exc}") from exc
+        if not thread_id:
+            raise HTTPException(status_code=500, detail="failed_to_create_thread")
+
+    workflow_id = os.getenv("CHATKIT_WORKFLOW_ID")
+    if not workflow_id:
+        raise HTTPException(status_code=500, detail="chatkit_workflow_not_configured")
+
+    state_variables: Dict[str, Any] = {"assistant_id": assistant_id, "thread_id": thread_id}
+    workflow_payload: Dict[str, Any] = {"id": workflow_id, "state_variables": state_variables}
+    workflow_version = os.getenv("CHATKIT_WORKFLOW_VERSION")
+    if workflow_version:
+        workflow_payload["version"] = workflow_version
+
+    user_id = os.getenv("CHATKIT_USER_ID", "scout-web-client")
+
+    try:
+        session = client.beta.chatkit.sessions.create(
+            user=user_id,
+            workflow=workflow_payload,
+            chatkit_configuration={
+                "history": {"enabled": True},
+            },
+        )
+    except Exception as exc:  # pragma: no cover - network/API errors
+        raise HTTPException(status_code=500, detail=f"failed_to_create_chatkit_session: {exc}") from exc
+
+    client_secret = getattr(session, "client_secret", None)
+    if not client_secret:
+        raise HTTPException(status_code=500, detail="chatkit_session_missing_secret")
+
+    return ChatKitSessionResponse(client_secret=client_secret, thread_id=thread_id)
 
 
 @app.post("/ask")

@@ -7,3 +7,6 @@ nl-poc/nul
 tests/*.md
 nl-poc/tests/*.md
 var/
+node_modules/
+.next/
+tsconfig.tsbuildinfo
