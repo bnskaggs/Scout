@@ -5,7 +5,7 @@ import json
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:  # pragma: no cover - standard runtime import
     from fastapi import APIRouter, HTTPException
@@ -287,4 +287,13 @@ def agent_entrypoint(payload: AgentRequest) -> JSONResponse:
     return JSONResponse(content=json.loads(_json_dumps(validated.dict())))
 
 
-__all__ = ["router"]
+def ensure_agent_runtime(model: Optional[str] = None) -> Tuple[Any, str, str]:
+    """Return an OpenAI client, assistant id, and resolved model for the analytics agent."""
+
+    resolved_model = model or _DEFAULT_AGENT_MODEL
+    client = _ensure_client()
+    assistant_id = _ensure_agent(client, resolved_model)
+    return client, assistant_id, resolved_model
+
+
+__all__ = ["router", "ensure_agent_runtime"]
