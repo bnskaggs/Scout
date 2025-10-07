@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import guardrails, sql_builder, viz
+from .agentkit import router as agentkit_router
 from .admin.canonical import api_router as canonical_api_router
 from .admin.canonical import router as canonical_admin_router
 from .canonical import CanonicalStore, CanonicalWatcher
@@ -94,6 +95,7 @@ if hasattr(app, "include_router"):
     app.include_router(feedback_router)
     app.include_router(canonical_admin_router)
     app.include_router(canonical_api_router)
+    app.include_router(agentkit_router)
 
 _state: Dict[str, Any] = {
     "last_debug": None,
