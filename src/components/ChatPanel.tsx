@@ -90,16 +90,20 @@ async function loadChatKitScript() {
   const url =
     process.env.NEXT_PUBLIC_CHATKIT_SCRIPT_URL || DEFAULT_CHATKIT_SCRIPT_URL;
 
+  console.log("Loading ChatKit from:", url);
+
   if (typeof window === "undefined" || typeof document === "undefined") {
     return;
   }
 
   if (window.ChatKit) {
+    console.log("ChatKit already loaded");
     return;
   }
 
   const existingScript = document.getElementById("chatkit-script");
   if (existingScript) {
+    console.log("ChatKit script tag exists, waiting for window.ChatKit...");
     await waitForChatKit();
     return;
   }
@@ -109,8 +113,16 @@ async function loadChatKitScript() {
     script.id = "chatkit-script";
     script.src = url;
     script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load ChatKit script."));
+    script.onload = () => {
+      console.log("ChatKit script loaded successfully");
+      console.log("window.ChatKit available:", !!window.ChatKit);
+      console.log("window keys:", Object.keys(window).filter(k => k.toLowerCase().includes('chat')));
+      resolve();
+    };
+    script.onerror = (e) => {
+      console.error("ChatKit script load error:", e);
+      reject(new Error("Failed to load ChatKit script."));
+    };
     document.body.appendChild(script);
   });
 
@@ -120,16 +132,29 @@ async function loadChatKitScript() {
 function waitForChatKit() {
   return new Promise<void>((resolve, reject) => {
     if (window.ChatKit) {
+      console.log("ChatKit found immediately");
       resolve();
       return;
     }
 
+    console.log("Waiting for window.ChatKit to become available...");
+    let checks = 0;
+
     const timeout = window.setTimeout(() => {
-      reject(new Error("ChatKit script timed out while loading."));
-    }, 10000);
+      console.error(`ChatKit timed out after ${checks} checks`);
+      console.error("window.ChatKit:", window.ChatKit);
+      console.error("Available window properties:", Object.keys(window).filter(k => k.toLowerCase().includes('chat')));
+      reject(new Error("ChatKit script timed out while loading. Check browser console for details."));
+    }, 30000); // Increased to 30 seconds for debugging
 
     const check = () => {
+      checks++;
+      if (checks % 10 === 0) {
+        console.log(`Still waiting for ChatKit... (${checks} checks)`);
+      }
+
       if (window.ChatKit) {
+        console.log("ChatKit found after", checks, "checks");
         window.clearTimeout(timeout);
         resolve();
       } else {

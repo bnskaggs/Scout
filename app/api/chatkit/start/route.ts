@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 const CHATKIT_URL = "https://api.openai.com/v1/chatkit/sessions";
-
+console.log("OPENAI_API_KEY present?", !!process.env.OPENAI_API_KEY);
 export async function POST() {
   const apiKey = process.env.OPENAI_API_KEY;
 
@@ -37,7 +37,7 @@ export async function POST() {
     headers,
     body: JSON.stringify({
       workflow: { id: workflowId },
-      user: { id: "test_user_1", name: "Ben Skaggs" },
+      user:  "test_user_1",
     }),
   });
 

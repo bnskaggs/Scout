@@ -10,3 +10,7 @@ var/
 node_modules/
 .next/
 tsconfig.tsbuildinfo
+nl-poc/frontend/.env.local
+package-lock.json
+.env
+package-lock.json

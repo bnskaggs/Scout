@@ -1,15 +1,31 @@
 import dynamic from 'next/dynamic';
 
-const ChatPanel = dynamic(() => import('@/components/ChatPanel'), { ssr: false });
+"use client";
 
-export default function Page() {
+import { ChatKit, useChatKit } from "@openai/chatkit-react";
+
+export default function ChatPage() {
+  const { control, error } = useChatKit({
+    api: {
+      async getClientSecret(existing) {
+        // If you store/refresh sessions, handle `existing` here
+        const res = await fetch("/api/chatkit/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        const { client_secret, error } = await res.json();
+        if (error) throw new Error(error);
+        return client_secret;
+      },
+    },
+  });
+
   return (
-    <main className="p-6 space-y-4">
-      <header>
-        <h1 className="text-xl font-semibold">TrueSight Agent</h1>
-        <p className="text-sm text-neutral-600">Ask questions about your data and review structured answers.</p>
-      </header>
-      <ChatPanel />
-    </main>
+    <div className="w-full max-w-3xl h-[600px]">
+      {error ? (
+        <div className="text-red-500 text-sm p-2">Chat init failed: {String(error)}</div>
+      ) : null}
+      <ChatKit control={control} className="h-full w-full" />
+    </div>
   );
 }
