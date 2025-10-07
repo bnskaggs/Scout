@@ -1,30 +1,65 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({}));
-  const thread_id = typeof body?.thread_id === 'string' && body.thread_id.length > 0 ? body.thread_id : undefined;
+type ChatKitSessionResponse = {
+  client_secret?: string;
+  [key: string]: unknown;
+};
 
-  const backendBase = process.env.BACKEND_BASE_URL;
-  if (!backendBase) {
-    return NextResponse.json({ error: 'backend_not_configured' }, { status: 500 });
+export async function POST() {
+  const apiKey = process.env.OPENAI_API_KEY;
+  const workflowId = process.env.CHATKIT_WORKFLOW_ID;
+
+  if (!apiKey || !workflowId) {
+    console.error('ChatKit session configuration is incomplete.', {
+      hasApiKey: Boolean(apiKey),
+      hasWorkflowId: Boolean(workflowId),
+    });
+    return NextResponse.json(
+      { error: 'chatkit_configuration_error' },
+      { status: 500 },
+    );
   }
 
-  const target = new URL('/api/chatkit/session', backendBase);
-
   try {
-    const res = await fetch(target, {
+    const upstreamResponse = await fetch('https://api.openai.com/v1/chatkit/sessions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ thread_id }),
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'OpenAI-Beta': 'chatkit_beta=v1',
+      },
+      body: JSON.stringify({
+        workflow: { id: workflowId },
+        user: 'anon-device',
+      }),
     });
 
-    if (!res.ok) {
-      return NextResponse.json({ error: 'session_failed' }, { status: 500 });
+    if (!upstreamResponse.ok) {
+      const errorBody = await upstreamResponse.text();
+      console.error('ChatKit session creation failed.', {
+        status: upstreamResponse.status,
+        statusText: upstreamResponse.statusText,
+        body: errorBody,
+      });
+
+      const status = upstreamResponse.status >= 400 && upstreamResponse.status < 500 ? upstreamResponse.status : 502;
+      return NextResponse.json({ error: 'chatkit_session_failed' }, { status });
     }
 
-    const data = await res.json();
-    return NextResponse.json(data);
+    const payload = (await upstreamResponse.json()) as ChatKitSessionResponse;
+    const { client_secret: clientSecret } = payload;
+
+    if (typeof clientSecret !== 'string' || clientSecret.length === 0) {
+      console.error('ChatKit session response missing client_secret.', { payload });
+      return NextResponse.json(
+        { error: 'chatkit_invalid_session_response' },
+        { status: 502 },
+      );
+    }
+
+    return NextResponse.json({ client_secret: clientSecret });
   } catch (error) {
-    return NextResponse.json({ error: 'session_failed' }, { status: 500 });
+    console.error('Unexpected error while creating ChatKit session.', error);
+    return NextResponse.json({ error: 'chatkit_session_error' }, { status: 500 });
   }
 }
