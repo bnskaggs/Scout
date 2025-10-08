@@ -10,8 +10,8 @@ type Message = {
 };
 
 /**
- * Simple chat interface that uses the /agent endpoint
- * (which has proper function calling built-in via Assistants API)
+ * Simple chat interface with multi-turn conversation support.
+ * Uses /chat/complete endpoint for context-aware conversations.
  *
  * Access at: http://localhost:3000/simple
  */
@@ -19,7 +19,7 @@ export default function SimpleChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const [sessionId] = useState(() => `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
   const [insight, setInsight] = useState<InsightPanelData | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -46,7 +46,7 @@ export default function SimpleChatPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: userMessage,
-          thread_id: threadId,
+          session_id: sessionId,
         }),
       });
 
@@ -57,11 +57,6 @@ export default function SimpleChatPage() {
 
       const data = await response.json();
       console.log("Agent response:", data);
-
-      // Update thread ID
-      if (data.thread_id && !threadId) {
-        setThreadId(data.thread_id);
-      }
 
       // Create insight data
       const insightData: InsightPanelData = {
@@ -114,7 +109,7 @@ export default function SimpleChatPage() {
               Scout Analytics Agent
             </h1>
             <p className="text-sm text-gray-600">
-              Ask questions about your data
+              Ask questions about your data • Multi-turn conversations enabled
             </p>
           </div>
 

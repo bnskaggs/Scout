@@ -465,11 +465,18 @@ def build_plan_llm(question: str) -> Dict[str, object]:
     # The LLM call itself can raise configuration errors; let them bubble up.
     raw = call_intent_llm(prompt, semantic_yaml, columns, question)
 
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[PLANNER DEBUG] LLM raw response: {raw[:500]}")
 
     try:
         payload = json.loads(raw)
     except Exception as exc:  # pragma: no cover - defensive path
         raise RuntimeError(f"LLM returned non-JSON payload: {raw[:200]}...") from exc
+
+    logger.info(f"[PLANNER DEBUG] Parsed payload keys: {list(payload.keys()) if isinstance(payload, dict) else 'not a dict'}")
+    logger.info(f"[PLANNER DEBUG] Has nql_version: {payload.get('nql_version') if isinstance(payload, dict) else 'N/A'}")
+    logger.info(f"[PLANNER DEBUG] NQL enabled: {use_nql_enabled()}")
 
     bundle = load_synonyms()
     if use_nql_enabled() and isinstance(payload, dict) and payload.get("nql_version"):

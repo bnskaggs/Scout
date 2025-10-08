@@ -156,6 +156,7 @@ def call_intent_llm(prompt_text: str, semantic_yaml: str, column_catalog: list, 
         resp = client.chat.completions.create(
             model=model,
             temperature=0,
+            response_format={"type": "json_object"},  # Force JSON mode for reliable NQL output
             messages=[
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_payload},

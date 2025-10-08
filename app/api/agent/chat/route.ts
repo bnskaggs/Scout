@@ -1,23 +1,30 @@
 import { NextResponse } from 'next/server';
 
 /**
- * Bridge to the Python /agent endpoint which uses Assistants API with proper function calling.
- * This is simpler than ChatKit workflows and already has tools configured.
+ * Bridge to the Python /chat/complete endpoint with conversation state.
+ * Enables multi-turn conversations with context retention.
  */
 
 type ChatRequest = {
   message: string;
-  thread_id?: string;
-  session_id?: string;
+  session_id: string;
 };
 
 type ChatResponse = {
-  thread_id: string;
+  session_id: string;
   table: Array<Record<string, any>>;
   chart: Record<string, any>;
   sql: string;
   summary: string;
   warnings: string[];
+  chips?: {
+    dimensions?: string[];
+    filters?: string[];
+    time?: string[];
+  };
+  nql_status?: Record<string, any>;
+  engine?: string;
+  status?: string;
 };
 
 export async function POST(request: Request) {
@@ -31,17 +38,26 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!body.session_id || typeof body.session_id !== 'string') {
+      return NextResponse.json(
+        { error: 'Missing or invalid "session_id" field' },
+        { status: 400 }
+      );
+    }
+
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
-    // Call the Python /ask endpoint (simpler, no agent complexity)
-    const backendResponse = await fetch(`${backendUrl}/ask`, {
+    // Call the Python /chat/complete endpoint (stateful conversations)
+    const backendResponse = await fetch(`${backendUrl}/chat/complete`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        question: body.message,
+        utterance: body.message,
+        session_id: body.session_id,
         use_llm: true,
+        context_enabled: true,
       }),
     });
 
@@ -64,18 +80,24 @@ export async function POST(request: Request) {
 
     const result = await backendResponse.json();
 
-    // Transform /ask response to match expected format
+    // Transform /chat/complete response
     const response: ChatResponse = {
-      thread_id: body.thread_id || `thread-${Date.now()}`,
+      session_id: body.session_id,
       table: result.table || [],
       chart: result.chart || {},
       sql: result.sql || '',
       summary: result.answer || result.summary || 'Query completed',
       warnings: result.warnings || [],
+      chips: result.chips,
+      nql_status: result.nql_status,
+      engine: result.engine,
+      status: result.status,
     };
 
     console.log('[Agent] Response:', {
-      thread_id: response.thread_id,
+      session_id: response.session_id,
+      engine: response.engine,
+      status: response.status,
       hasTable: !!response.table?.length,
       hasChart: !!response.chart,
       summary: response.summary?.substring(0, 100),

@@ -273,19 +273,23 @@ def rewrite_followup(
     add_match = re.search(r"(?:only|just)\s+([\w\s'&/-]+)", lowered)
     if add_match:
         value = add_match.group(1).strip().strip(". ")
-        field = None
-        if working.dimensions:
-            field = working.dimensions[0]
-        if not field:
-            # fall back to area if unsure
-            field = "area"
-        filt_type = _DIMENSION_TYPES.get(field, "category")
-        working.filters = [
-            f for f in working.filters if f.field != field or f.field == "month"
-        ]
-        working.filters.append(
-            Filter(field=field, op="=", value=value.title(), type=filt_type)
-        )
+
+        # Check if this is a time reference before treating as a dimension filter
+        time_check = extract_time_range(value, today=today)
+        if not time_check:
+            field = None
+            if working.dimensions:
+                field = working.dimensions[0]
+            if not field:
+                # fall back to area if unsure
+                field = "area"
+            filt_type = _DIMENSION_TYPES.get(field, "category")
+            working.filters = [
+                f for f in working.filters if f.field != field or f.field == "month"
+            ]
+            working.filters.append(
+                Filter(field=field, op="=", value=value.title(), type=filt_type)
+            )
 
     # Time adjustments
     anchor_end = working.time.window.end
