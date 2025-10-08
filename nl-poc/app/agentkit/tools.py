@@ -144,3 +144,51 @@ def summarize_and_validate(
 
 
 __all__ = ["compile_plan_and_query", "summarize_and_validate", "QueryCompilationResult", "SummaryResult"]
+
+# --- Agent-facing tool: TrueSight query --------------------------------------
+
+from typing import Optional, Dict, Any
+
+def truesight_query(*, utterance: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    AgentBuilder tool entrypoint.
+    Runs the deterministic NQL pipeline and returns renderable results.
+
+    Parameters
+    ----------
+    utterance : str
+        The user's natural-language analytics question.
+    session_id : Optional[str]
+        Optional thread/session identifier (you can pass ChatKit thread_id).
+
+    Returns
+    -------
+    dict
+        {
+          "status": "complete",
+          "answer": str,
+          "table": List[Dict[str, Any]],
+          "chart": Dict[str, Any],
+          "sql": str,
+          "warnings": List[str],
+          "session_id": Optional[str]
+        }
+    """
+    try:
+        result = compile_plan_and_query(question=utterance)
+        return {
+            "status": "complete",
+            "answer": result.summary,
+            "table": result.table,
+            "chart": result.chart,
+            "sql": result.sql,
+            "warnings": result.warnings,
+            "session_id": session_id,
+        }
+    except Exception as e:
+        # Keep error payload simple + serialisable for the Agent runtime
+        return {
+            "status": "error",
+            "detail": str(e),
+            "session_id": session_id,
+        }

@@ -7,7 +7,7 @@ type ChatKitSessionResponse = {
 
 export async function POST() {
   const apiKey = process.env.OPENAI_API_KEY;
-  const workflowId = process.env.CHATKIT_WORKFLOW_ID;
+  const workflowId = process.env.NEXT_PUBLIC_CHATKIT_WORKFLOW_ID;
 
   if (!apiKey || !workflowId) {
     console.error('ChatKit session configuration is incomplete.', {
