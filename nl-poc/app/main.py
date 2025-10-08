@@ -142,7 +142,7 @@ def _gather_nql_debug_snapshot() -> Dict[str, Any]:
         "use_nql_raw": use_nql_raw,
         "llm_provider": provider,
         "model": model,
-        "api_key_present": bool(os.getenv("LLM_API_KEY")),
+        "api_key_present": bool(os.getenv("OPENAI_API_KEY")),
         "retriever_enabled": _env_truthy(os.getenv("RETRIEVER_ENABLED")),
     }
     return snapshot

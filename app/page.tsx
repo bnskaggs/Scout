@@ -19,6 +19,7 @@ type ChatKitMessage = {
 
 export default function ChatPage() {
   const [insight, setInsight] = useState<InsightPanelData | null>(null);
+  const [sessionId] = useState(() => `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
 
   const { control, error, messages } = useChatKit({
     api: {
@@ -40,6 +41,14 @@ export default function ChatPage() {
     if (!chatMessages.length) return;
     const latest = chatMessages[chatMessages.length - 1];
     const contentBlocks = Array.isArray(latest?.content) ? latest.content : [];
+
+    // DEBUG: Log the message structure
+    console.log('[ChatKit Debug] Latest message:', {
+      role: latest?.role,
+      contentBlocks: contentBlocks,
+      metadata: latest?.metadata,
+      fullMessage: latest
+    });
 
     if ((latest?.role && latest.role !== "assistant") || (contentBlocks.length === 0 && !latest?.metadata)) {
       return;
@@ -93,7 +102,33 @@ export default function ChatPage() {
     };
 
     setInsight(insightPayload);
-  }, [chatMessages]);
+
+    // WORKAROUND: Try to fetch cached data if no table/chart found
+    if (!resolvedTable && !resolvedChart && latest?.role === 'assistant') {
+      console.log('[ChatKit] No structured data in message, fetching from cache...');
+      fetch(`/api/tools/truesight-query?session_id=${sessionId}`)
+        .then(res => res.json())
+        .then(cached => {
+          if (cached.table || cached.chart) {
+            console.log('[ChatKit] Found cached data:', cached);
+            setInsight({
+              summary: cached.answer || summaryText,
+              chart: cached.chart || null,
+              table: cached.table || null,
+              sql: cached.sql || null,
+              plan: null,
+              lineage: null,
+              warnings: cached.warnings || warnings,
+              status: 'complete',
+              followups: followupsData,
+              chips: null,
+              nqlStatus: null,
+            });
+          }
+        })
+        .catch(err => console.log('[ChatKit] No cached data:', err));
+    }
+  }, [chatMessages, sessionId]);
 
   return (
     <div className="grid h-screen grid-cols-1 gap-4 bg-gray-50 p-4 md:grid-cols-2">
