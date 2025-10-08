@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python -m pytest tests/v2/ -v)",
-      "Bash(python -m pytest tests/v2/ -v --tb=short)"
+      "Bash(python -m pytest tests/v2/ -v --tb=short)",
+      "Bash(curl -X POST http://localhost:8000/chat/complete -H \"Content-Type: application/json\" -d \"{\"\"utterance\"\": \"\"Show me total incidents\"\", \"\"session_id\"\": \"\"final-cleanup-test\"\"}\" -s)"
     ],
     "deny": [],
     "ask": []
