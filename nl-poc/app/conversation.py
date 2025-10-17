@@ -269,27 +269,56 @@ def rewrite_followup(
                 Filter(field=field, op="!=", value=value.title(), type=filt_type)
             )
 
-    # Detect filter additions like "only Central" or "just show Hollywood"
-    add_match = re.search(r"(?:only|just)\s+([\w\s'&/-]+)", lowered)
-    if add_match:
-        value = add_match.group(1).strip().strip(". ")
+    # Detect filter modifications - "include" adds to existing, "only/just" replaces
+    include_match = re.search(r"(?:include)\s+([\w\s'&/-]+(?:\s+and\s+[\w\s'&/-]+)*)", lowered)
+    replace_match = re.search(
+        r"(?:only|just|now\s+look\s+at|look\s+at|consider|focus\s+on|show\s+me)\s+([\w\s'&/-]+(?:\s+and\s+[\w\s'&/-]+)*)",
+        lowered
+    )
+
+    if include_match or replace_match:
+        is_include = bool(include_match)
+        match = include_match if is_include else replace_match
+        value_str = match.group(1).strip().strip(". ")
 
         # Check if this is a time reference before treating as a dimension filter
-        time_check = extract_time_range(value, today=today)
+        time_check = extract_time_range(value_str, today=today)
         if not time_check:
+            # Parse multiple values separated by "and" or ","
+            values = re.split(r'\s+and\s+|,\s*', value_str)
+            values = [v.strip().title() for v in values if v.strip()]
+
             field = None
             if working.dimensions:
                 field = working.dimensions[0]
             if not field:
-                # fall back to area if unsure
                 field = "area"
             filt_type = _DIMENSION_TYPES.get(field, "category")
-            working.filters = [
-                f for f in working.filters if f.field != field or f.field == "month"
-            ]
-            working.filters.append(
-                Filter(field=field, op="=", value=value.title(), type=filt_type)
-            )
+
+            if is_include:
+                # Include: Add to existing filter values
+                existing_filter = next((f for f in working.filters if f.field == field and f.field != "month"), None)
+                if existing_filter:
+                    # Merge with existing values
+                    if isinstance(existing_filter.value, list):
+                        new_values = list(set(existing_filter.value + values))
+                    else:
+                        new_values = list(set([existing_filter.value] + values))
+                    existing_filter.op = "in"
+                    existing_filter.value = new_values
+                else:
+                    # No existing filter, create new one
+                    if len(values) > 1:
+                        working.filters.append(Filter(field=field, op="in", value=values, type=filt_type))
+                    else:
+                        working.filters.append(Filter(field=field, op="=", value=values[0], type=filt_type))
+            else:
+                # Replace: Remove existing filters and add new one
+                working.filters = [f for f in working.filters if f.field != field or f.field == "month"]
+                if len(values) > 1:
+                    working.filters.append(Filter(field=field, op="in", value=values, type=filt_type))
+                else:
+                    working.filters.append(Filter(field=field, op="=", value=values[0], type=filt_type))
 
     # Time adjustments
     anchor_end = working.time.window.end

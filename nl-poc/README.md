@@ -10,8 +10,9 @@ nl-poc/
   config/           # Semantic model definitions
   data/             # CSV input and generated DuckDB database
   eval/             # Sample evaluation prompts
-  frontend/         # Minimal HTML front-end
 ```
+
+The main UI is a Next.js React application in the parent directory (`../app/`).
 
 ## Getting Started
 
@@ -33,7 +34,13 @@ nl-poc/
 
 4. **Open the UI**
 
-   Serve `frontend/index.html` with any static HTTP server (or open it directly in the browser) and point it to the running API (defaults to the same origin if served together).
+   In the parent directory, run the Next.js dev server:
+   ```bash
+   cd ..
+   npm run dev
+   ```
+
+   Then visit http://localhost:3000/ to access the Scout Analytics Agent interface.
 
 ## API Endpoints
 

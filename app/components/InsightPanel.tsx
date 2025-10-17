@@ -35,6 +35,7 @@ export type InsightPanelData = {
 
 export type InsightPanelProps = {
   data: InsightPanelData | null;
+  onFollowupClick?: (question: string) => void;
 };
 
 function formatStructuredValue(value: unknown) {
@@ -99,7 +100,7 @@ function renderChips(chips: InsightChips | null | undefined) {
   );
 }
 
-export function InsightPanel({ data }: InsightPanelProps) {
+export function InsightPanel({ data, onFollowupClick }: InsightPanelProps) {
   const warnings = useMemo(() => (Array.isArray(data?.warnings) ? data?.warnings.filter(Boolean) : []), [data?.warnings]);
   const followups = useMemo(() => (Array.isArray(data?.followups) ? data?.followups.filter(Boolean) : []), [data?.followups]);
   const needsClarification = data?.status === "clarification_needed";
@@ -140,12 +141,13 @@ export function InsightPanel({ data }: InsightPanelProps) {
                 <p className="text-sm font-medium text-gray-600">You might also ask:</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {followups.map((item, index) => (
-                    <span
+                    <button
                       key={`${item}-${index}`}
-                      className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700"
+                      onClick={() => onFollowupClick?.(item)}
+                      className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer"
                     >
                       {item}
-                    </span>
+                    </button>
                   ))}
                 </div>
               </div>
