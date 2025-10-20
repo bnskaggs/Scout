@@ -12,6 +12,19 @@ from .planner import build_plan_rule_based
 from .synonyms import detect_weapon_patterns
 from .time_utils import extract_time_range
 from .nql.model import CompareInternalWindow, CompareSpec, Filter, Metric, NQLQuery
+from .patterns import (
+    FilterRemoval,
+    RangeFilter,
+    TopN,
+    match_dimension_change,
+    match_filter_removal,
+    match_filter_addition,
+    match_filter_clear,
+    match_range_filter,
+    match_top_n,
+    match_mom_toggle,
+    normalize_text,
+)
 
 
 # Dimension canonical names that map to the semantic model.
@@ -46,7 +59,8 @@ _DIMENSION_TYPES = {
 
 
 def _normalise_text(value: str) -> str:
-    return re.sub(r"\s+", " ", value.strip().lower())
+    """Deprecated: Use patterns.normalize_text instead."""
+    return normalize_text(value)
 
 
 def _resolve_dimension(candidate: str) -> Optional[str]:
@@ -82,22 +96,8 @@ def _is_self_contained_query(utterance: str) -> bool:
 
 
 def _extract_dimension_candidate(utterance: str) -> Optional[str]:
-    """Pull a possible dimension target from the utterance."""
-
-    lowered = utterance.lower()
-    patterns = [
-        r"same(?:\s+view)?\s+but\s+by\s+([a-z\s]+)",
-        r"by\s+([a-z\s]+)",
-        r"break(?:ing|)\s+down\s+by\s+([a-z\s]+)",
-        r"group\s+by\s+([a-z\s]+)",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, lowered)
-        if match:
-            candidate = match.group(1).strip()
-            candidate = re.sub(r"\bfor\b", "", candidate).strip()
-            return candidate
-    return None
+    """Deprecated: Use patterns.match_dimension_change instead."""
+    return match_dimension_change(utterance)
 
 
 def _first_day_of_month(anchor: date) -> date:
@@ -241,53 +241,66 @@ def rewrite_followup(
             has_month = "month" in working.group_by
             working.group_by = ["month"] if has_month else []
 
-    # Detect filter removals like "filter out Central"
-    remove_match = re.search(
-        r"(?:filter out|exclude|remove)\s+([\w\s'&/-]+)", lowered
-    )
-    if remove_match:
-        value = remove_match.group(1).strip().strip(". ")
-        value_norm = _normalise_text(value)
-        filter_modified = False
+    # Detect top-N patterns like "top 5", "bottom 3 areas"
+    top_n = match_top_n(utterance)
+    if top_n:
+        # Set limit
+        working.limit = top_n.k
 
-        # First, try to modify an existing filter
-        for filt in working.filters:
-            if isinstance(filt.value, str) and _normalise_text(str(filt.value)) == value_norm:
-                if filt.op == "=":
-                    filt.op = "!="
-                else:
-                    working.filters = [f for f in working.filters if f is not filt]
-                filter_modified = True
-                break
+        # Update sort to match direction
+        if working.metrics:
+            metric_field = working.metrics[0].alias
+            # Clear existing sort and set new one
+            from .nql.model import SortSpec
+            working.sort = [SortSpec(by=metric_field, dir=top_n.direction)]
 
-        # If no existing filter was modified, add a new exclusion filter
-        if not filter_modified:
-            # Infer the field from the current dimension or default to area
-            field = working.dimensions[0] if working.dimensions else "area"
-            filt_type = _DIMENSION_TYPES.get(field, "category")
-            working.filters.append(
-                Filter(field=field, op="!=", value=value.title(), type=filt_type)
-            )
+        # If dimension specified, ensure it's in dimensions/group_by
+        if top_n.dimension:
+            if top_n.dimension not in working.dimensions:
+                working.dimensions = [top_n.dimension]
+            if top_n.dimension not in working.group_by:
+                working.group_by = [top_n.dimension]
+
+    # Detect filter removals like "drop Central", "remove Hollywood and Downtown"
+    filter_removal = match_filter_removal(utterance)
+    if filter_removal:
+        removal_values = [normalize_text(v) for v in filter_removal.values]
+        field = working.dimensions[0] if working.dimensions else "area"
+
+        # Try to remove from existing filters
+        for filt in working.filters[:]:  # Use slice to allow modification during iteration
+            if filt.field == field and filt.field != "month":
+                if isinstance(filt.value, list):
+                    # Remove values from list (for "in" operator)
+                    remaining = [v for v in filt.value if normalize_text(v) not in removal_values]
+                    if len(remaining) == 0:
+                        # All values removed, delete the filter
+                        working.filters.remove(filt)
+                    elif len(remaining) != len(filt.value):
+                        # Some values removed, update the filter
+                        if len(remaining) == 1:
+                            filt.op = "="
+                            filt.value = remaining[0]
+                        else:
+                            filt.value = remaining
+                elif isinstance(filt.value, str):
+                    # Single value filter
+                    if normalize_text(filt.value) in removal_values:
+                        # Convert to exclusion or remove entirely
+                        if filt.op == "=":
+                            filt.op = "!="
+                        else:
+                            working.filters.remove(filt)
 
     # Detect filter modifications - "include" adds to existing, "only/just" replaces
-    include_match = re.search(r"(?:include)\s+([\w\s'&/-]+(?:\s+and\s+[\w\s'&/-]+)*)", lowered)
-    replace_match = re.search(
-        r"(?:only|just|now\s+look\s+at|look\s+at|consider|focus\s+on|show\s+me)\s+([\w\s'&/-]+(?:\s+and\s+[\w\s'&/-]+)*)",
-        lowered
-    )
-
-    if include_match or replace_match:
-        is_include = bool(include_match)
-        match = include_match if is_include else replace_match
-        value_str = match.group(1).strip().strip(". ")
-
+    filter_addition = match_filter_addition(utterance)
+    if filter_addition:
         # Check if this is a time reference before treating as a dimension filter
+        value_str = " and ".join(filter_addition.values)
         time_check = extract_time_range(value_str, today=today)
-        if not time_check:
-            # Parse multiple values separated by "and" or ","
-            values = re.split(r'\s+and\s+|,\s*', value_str)
-            values = [v.strip().title() for v in values if v.strip()]
 
+        if not time_check:
+            values = filter_addition.values
             field = None
             if working.dimensions:
                 field = working.dimensions[0]
@@ -295,7 +308,7 @@ def rewrite_followup(
                 field = "area"
             filt_type = _DIMENSION_TYPES.get(field, "category")
 
-            if is_include:
+            if filter_addition.is_include:
                 # Include: Add to existing filter values
                 existing_filter = next((f for f in working.filters if f.field == field and f.field != "month"), None)
                 if existing_filter:
@@ -319,6 +332,35 @@ def rewrite_followup(
                     working.filters.append(Filter(field=field, op="in", value=values, type=filt_type))
                 else:
                     working.filters.append(Filter(field=field, op="=", value=values[0], type=filt_type))
+
+    # Detect filter clear patterns like "reset filters", "show all areas"
+    clear_field = match_filter_clear(utterance)
+    if clear_field is not None:
+        if clear_field == "":
+            # Clear all dimension filters, preserve time filters
+            working.filters = [f for f in working.filters if f.field == "month"]
+        else:
+            # Clear filters for specific field
+            working.filters = [f for f in working.filters if f.field != clear_field]
+
+    # Detect range filter patterns like "over 100", "between 50 and 100"
+    range_filter = match_range_filter(utterance)
+    if range_filter:
+        # Determine the metric field from the current query
+        # For now, default to "incidents" but could be inferred from working.metrics
+        metric_field = range_filter.field
+        if working.metrics:
+            metric_field = working.metrics[0].alias
+
+        # Add numeric filter
+        working.filters.append(
+            Filter(
+                field=metric_field,
+                op=range_filter.op,
+                value=range_filter.value,
+                type="number"
+            )
+        )
 
     # Time adjustments
     anchor_end = working.time.window.end
@@ -378,12 +420,9 @@ def rewrite_followup(
         _ensure_trend_group_by(working)
 
     # MoM toggles
-    if re.search(r"(turn on|add|include).*(mom|month over month)", lowered):
-        _toggle_mom_compare(working, True)
-    elif re.search(r"(turn off|remove|drop).*(mom|month over month)", lowered):
-        _toggle_mom_compare(working, False)
-    elif re.search(r"\bmom\b", lowered) and "turn off" not in lowered:
-        _toggle_mom_compare(working, True)
+    mom_toggle = match_mom_toggle(utterance)
+    if mom_toggle is not None:
+        _toggle_mom_compare(working, mom_toggle)
 
     return working.dict()
 
